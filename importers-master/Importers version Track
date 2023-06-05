@@ -1,0 +1,41 @@
+Latest version Number of files
+sbi.py V0.1
+etrade.py V0.1
+icici.py V0.1
+rksv.py V0.1
+zerodha.py V0.2
+config.py V0.2
+
+Changelog:
+
+config.py V0.2
+Added SBI, RKSV and ETrade in V0.2
+
+zerodha.py V0.2
+
+The variabe link had the following assignment. It was posted as part of txn posting. The {link} from transaction postings has been removed and replaced by data.EMPTY_SET  
+
+link = "{0[order_id]}".format(row)
+
+txn = data.Transaction(
+                            meta, date, self.FLAG, None, desc, data.EMPTY_SET, {link}, [
+                                data.Posting(account_inst, units_inst, cost, None, None,
+                                             None),
+                                data.Posting(self.account_fees, fees, None, None, None,
+                                             None),
+                                data.Posting(self.account_cash, None, None, None, None,
+                                             None),
+                                
+                            ])
+
+if rtype == 'buy':
+                        cost = position.Cost(rate, self.currency, None, None)
+                        txn = data.Transaction(
+                            meta, date, self.FLAG, None, desc, data.EMPTY_SET,data.EMPTY_SET,  [
+                                data.Posting(self.account_cash, -b_value, None, None, None,
+                                             None),
+                                data.Posting(self.account_fees, fees, None, None, None,
+                                             None),
+                                data.Posting(account_inst, units_inst, cost, None, None,
+                                             None),
+                            ])
