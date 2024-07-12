@@ -18,7 +18,7 @@ from beancount.core import data
 from beancount.core.position import Cost
 from dateutil.parser import parse
 
-from titlecase import titlecase
+# from titlecase import titlecase
 
 import csv
 import os
