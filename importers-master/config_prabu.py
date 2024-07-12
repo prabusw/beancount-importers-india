@@ -32,19 +32,19 @@ from importers.kvb import kvb
 # added the following line directly from smart_importer website.
 # Because of smartImporter, regular importer line has to be commented out.
 #from smart_importer import apply_hooks, PredictPayees, PredictPostings
-#my_bank_importer =  MyBankImporter('whatever', 'config', 'is', 'needed')
-#apply_hooks(my_bank_importer, [PredictPostings(), PredictPayees()])
+# my_bank_importer =  MyBankImporter('whatever', 'config', 'is', 'needed')
+# apply_hooks(my_bank_importer, [PredictPostings(), PredictPayees()])
 
-my_IciciBank_smartimporter = icici.IciciBankImporter('Assets:IN:ICICIBank:Savings', '1585')
-apply_hooks(my_IciciBank_smartimporter, [PredictPostings(), PredictPayees()])
+# my_IciciBank_smartimporter = icici.IciciBankImporter('Assets:IN:ICICIBank:Savings', '1585')
+# apply_hooks(my_IciciBank_smartimporter, [PredictPostings(), PredictPayees()])
 
 # The 7875 can be the last four character of your ICICI savings account. By suitably changing you can import from any ICICI account.
 # All the six accounts i.e Assets:IN:Investment:ILFSSS etc must be declared already in your my.beancount file, to make use of this.
 #
 
 CONFIG = [
-    my_IciciBank_smartimporter,
-    # icici.IciciBankImporter('Assets:IN:ICICIBank:Savings', '1585'),
+    # my_IciciBank_smartimporter,
+    icici.IciciBankImporter('Assets:IN:ICICIBank:Savings', '1585'),
     sbi.SBIImporter('Assets:IN:SBI:Savings', '8819'),
     iob.IOBImporter('Assets:IN:IOB:Savings:Aniruth', '3319'),
     iob.IOBImporter('Assets:IN:IOB:Savings:Aadhirai', '3320'),
