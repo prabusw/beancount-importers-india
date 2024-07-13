@@ -7,7 +7,7 @@ In V0.4 in line 34, the argument existing_entries was added to def extract .Orig
 """
 __copyright__ = "Copyright (C) 2020  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.3"
+__Version__ = "0.4"
 
 from beancount.core.number import D
 from beancount.ingest import importer
