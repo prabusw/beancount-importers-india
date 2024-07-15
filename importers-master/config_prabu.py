@@ -90,6 +90,7 @@ CONFIG = [
                         "Income:US:ETrade:{}:Dividend",
                         "Income:US:ETrade:{}:PnL",
                         "Expenses:Financial:Fees:ETrade",
+                        "Expenses:US:WithholdingTax:{}",  
                         "Income:US:Interest:ETrade"),
 
     kgi.KGIImporter("THB",

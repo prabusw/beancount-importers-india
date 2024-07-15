@@ -31,6 +31,7 @@ class ETradeImporter(importer.ImporterProtocol):
                  account_dividends,
                  account_gains,
                  account_fees,
+                 account_withholdingtax,
                  account_external):
         self.currency = currency
         self.account_root = account_root
@@ -38,6 +39,7 @@ class ETradeImporter(importer.ImporterProtocol):
         self.account_dividends = account_dividends
         self.account_gains = account_gains
         self.account_fees = account_fees
+        self.account_withholdingtax = account_withholdingtax
         self.account_external = account_external
 
     def identify(self, file):
@@ -73,6 +75,18 @@ class ETradeImporter(importer.ImporterProtocol):
                             data.Posting(self.account_cash, units, None, None, None, None),
                             data.Posting(account_dividends, -other, None, None, None, None),
                         ])
+                    
+                # elif rtype == 'Tax':
+                elif rtype in ('Tax', 'MISC'):    
+                    assert fees.number == ZERO
+
+                    account_withholdingtax = self.account_withholdingtax.format(instrument)
+
+                    txn = data.Transaction(
+                        meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
+                            data.Posting(self.account_cash, units, None, None, None, None),
+                            data.Posting(account_withholdingtax, -other, None, None, None, None),
+                        ])    
 
                 elif rtype == 'Interest':
                     assert fees.number == ZERO
@@ -83,6 +97,17 @@ class ETradeImporter(importer.ImporterProtocol):
                             data.Posting(self.account_external, -other, None, None, None,
                                          None),
                         ])
+
+                elif rtype in ('Wire', 'Fee'):
+                    # assert fees.number == ZERO
+                    txn = data.Transaction(
+                        meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
+                            data.Posting(self.account_cash, -units, None, None, None,
+                                         None),
+                            data.Posting("Expenses:FixMe", other, None, None, None,
+                                         None),
+                        ])
+
 
                 elif rtype in ('Bought', 'Sold'):
 
