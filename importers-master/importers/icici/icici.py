@@ -6,29 +6,33 @@ In v0.3 made changes to accept the headings as found in icici statement download
 In v0.4 in line 34, the argument existing_entries was added to def extract .Originally it was  def extract(self, f):
 In v0.5 modified to support beangulp
 In v0.6 modified to support downloaded file without changing date format or removing lines
+In v0.7 used the functionality from csvbase class
 """
 __copyright__ = "Copyright (C) 2020  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.6"
+__Version__ = "0.7"
 
 import os
-import csv
 import re
-
-# from titlecase import titlecase
-from datetime import datetime
-
-
-from beancount.core import amount
+from beangulp.importers.csvbase import Importer, Date, Amount, Column
 from beancount.core import data
-from beancount.core import flags
-from beancount.core.number import D
-import beangulp
 
-class IciciBankImporter(beangulp.Importer):
-    """An importer for IciciBank CSV files (a leading Indian bank)."""
+class IciciBankImporter(Importer):
+    """An importer for ICICI Bank CSV files."""
+    skiplines = 12  # Skip the first 12 lines before reading the header
+    date = Date("Transaction Date", frmt="%d/%m/%Y")
+    narration = Column("Transaction Remarks")
+    withdrawal = Amount("Withdrawal Amount (INR )")
+    deposit = Amount("Deposit Amount (INR )")
+    # balance = Amount("Balance (INR )")
 
-    def __init__(self, account,lastfour):
+    # @property
+    # def amount(self):
+    #     """Computed column to combine withdrawal and deposit into a single amount."""
+    #     return Column("Withdrawal Amount (INR )", "Deposit Amount (INR )", default=0)
+
+    def __init__(self, account, lastfour, currency="INR"):
+        super().__init__(account, currency)
         self.account_root = account
         self.lastfour = lastfour
 
@@ -38,85 +42,47 @@ class IciciBankImporter(beangulp.Importer):
     def account(self, filepath):
         return self.account_root
 
-    def extract(self, filepath, existing_entries=None):
-        entries = []
-        with open(filepath, newline='') as f:
-            reader = csv.reader(f)
+    def read(self, filepath):
+        """Override the read method to compute the amount."""
+        for row in super().read(filepath):
+              # Skip empty rows or rows missing a transaction date
+            if len(row) < 10 or not row[2]:  # assuming the 3rd column is the date
+                continue
+            # Compute the amount: negative for withdrawal, positive for deposit
+            if row.withdrawal != 0:
+                row.amount = -row.withdrawal  # Negative for withdrawals
+            elif row.deposit != 0:
+                row.amount = row.deposit  # Positive for deposits
+            else:
+                row.amount = 0  # Zero for zero-value transactions
+            # print("Processed row:", row)  # Debug print
+            yield row
 
-            # Skip the first 12 lines
-            for _ in range(12):
-                next(reader)
+    # def finalize(self, txn, row):
+    #     """Compute the amount from withdrawal and deposit and update the posting."""
 
-            # Read the header
-            header = next(reader)
-            col_index = {name: index for index, name in enumerate(header)}
+    #     # Compute amount based on withdrawal or deposit
+    #     if row.withdrawal != 0:
+    #         amount_value = -row.withdrawal  # Negative for withdrawals
+    #     elif row.deposit != 0:
+    #         amount_value = row.deposit  # Positive for deposits
+    #     else:
+    #         return None  # Skip zero-value transactions
 
-            # Process each transaction row
-            for row in reader:
-                # Skip empty rows
-                if not row:
-                    continue
+    #     # Create a new posting with the computed amount
+    #     new_posting = data.Posting(
+    #         account=txn.postings[0].account,
+    #         units=data.Amount(amount_value, self.currency),
+    #         cost=None,
+    #         price=None,
+    #         flag=None,
+    #         meta=None
+    #     )
 
-                # # Skip empty or invalid rows
-                # if not row or row[col_index["S No."]].strip() == "":
-                #     continue
+    #     # Replace the existing posting with the new one
+    #     txn = txn._replace(postings=[new_posting])
 
-                # Ensure the row has at least the required number of columns
-                if len(row) <= max(col_index.values()):
-                    continue  # Skip rows with insufficient columns
-
-                # Skip empty rows or rows missing a transaction date
-                transaction_date_str = row[col_index["Value Date"]].strip()
-                if not row or not transaction_date_str:
-                    continue  # Skip non-transactional or empty rows
-                try:
-                    # Parse transaction date
-                    txn_date = datetime.strptime(transaction_date_str, "%d/%m/%Y").date()
-                except ValueError:
-                    continue  # Skip rows with invalid date formats
-
-                # Determine narration and amount
-                narration = row[col_index["Transaction Remarks"]]
-
-                # Determine transaction amount (debit/credit)
-                withdrawal = row[col_index["Withdrawal Amount (INR )"]].strip()
-                deposit = row[col_index["Deposit Amount (INR )"]].strip()
-
-                if withdrawal and float(withdrawal) != 0.0:
-                    trans_amt = float(withdrawal) * -1.0  # Negative for withdrawals
-                elif deposit and float(deposit) != 0.0:
-                    trans_amt = float(deposit)  # Positive for deposits
-                else:
-                    continue  # Skip zero-value transactions
-
-                # Format the amount to two decimal places
-                trans_amt = '{:.2f}'.format(trans_amt)
-                txn_amount = amount.Amount(D(trans_amt), "INR")
-
-                # Create a Beancount transaction
-                meta = data.new_metadata(filepath, len(entries) + 1)
-                txn = data.Transaction(
-                    meta=meta,
-                    date=txn_date,
-                    flag=flags.FLAG_OKAY,
-                    payee="",
-                    narration=narration,
-                    tags=data.EMPTY_SET,
-                    links=data.EMPTY_SET,
-                    postings=[
-                        data.Posting(
-                            account=self.account_root,
-                            units=txn_amount,
-                            cost=None,
-                            price=None,
-                            flag=None,
-                            meta={}
-                        )
-                    ],
-                )
-                entries.append(txn)
-
-        return entries
+    #     return txn
 
 if __name__ == '__main__':
     importer = IciciBankImporter(
