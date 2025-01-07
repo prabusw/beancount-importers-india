@@ -5,36 +5,25 @@ In v0.2 made changes to automatically recognize credit and Debit transactions by
 In v0.3 made changes to accept the headings as found in icici statement downloads as it is.
 In v0.4 in line 34, the argument existing_entries was added to def extract .Originally it was  def extract(self, f):
 In v0.5 modified to support beangulp
-
+In v0.6 modified to support downloaded file without changing date format or removing lines
 """
 __copyright__ = "Copyright (C) 2020  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.5"
+__Version__ = "0.6"
 
 import os
-
 import csv
-import datetime
 import re
-import logging
 
-from dateutil.parser import parse
-from titlecase import titlecase
-from os import path
+# from titlecase import titlecase
+from datetime import datetime
 
-from beancount.core import account
+
 from beancount.core import amount
-from beancount.core import flags
 from beancount.core import data
+from beancount.core import flags
 from beancount.core.number import D
-# from beancount.core.position import Cost
-
-
 import beangulp
-from beangulp import mimetypes
-from beangulp.testing import main
-
-
 
 class IciciBankImporter(beangulp.Importer):
     """An importer for IciciBank CSV files (a leading Indian bank)."""
@@ -42,57 +31,94 @@ class IciciBankImporter(beangulp.Importer):
     def __init__(self, account,lastfour):
         self.account_root = account
         self.lastfour = lastfour
+
     def identify(self, filepath):
         return re.match('icici{}.*\.csv'.format(self.lastfour), os.path.basename(filepath))
-
 
     def account(self, filepath):
         return self.account_root
 
-    def extract(self, filepath, existing_entries):
-        # Open the CSV file and create directives.
+    def extract(self, filepath, existing_entries=None):
         entries = []
-        # index = 0
-        with open(filepath) as f:
-            for index, row in enumerate(csv.DictReader(f)):
-                trans_date = parse(row['Value Date']).date()
-                trans_desc = titlecase(row['Transaction Remarks'])
-                #trans_amt  = row['Amount']
+        with open(filepath, newline='') as f:
+            reader = csv.reader(f)
 
-                if row['Withdrawal Amount (INR )'] != "0" :    # this is needed for ICICI.
-                    trans_amt = float(row['Withdrawal Amount (INR )']) * -1.
-                elif row['Deposit Amount (INR )']:
-                    #trans_amt = float(row['Credit'].strip('$'))
-                    #left the above line to know about strip option
-                    trans_amt = float(row['Deposit Amount (INR )'])
+            # Skip the first 12 lines
+            for _ in range(12):
+                next(reader)
+
+            # Read the header
+            header = next(reader)
+            col_index = {name: index for index, name in enumerate(header)}
+
+            # Process each transaction row
+            for row in reader:
+                # Skip empty rows
+                if not row:
+                    continue
+
+                # # Skip empty or invalid rows
+                # if not row or row[col_index["S No."]].strip() == "":
+                #     continue
+
+                # Ensure the row has at least the required number of columns
+                if len(row) <= max(col_index.values()):
+                    continue  # Skip rows with insufficient columns
+
+                # Skip empty rows or rows missing a transaction date
+                transaction_date_str = row[col_index["Value Date"]].strip()
+                if not row or not transaction_date_str:
+                    continue  # Skip non-transactional or empty rows
+                try:
+                    # Parse transaction date
+                    txn_date = datetime.strptime(transaction_date_str, "%d/%m/%Y").date()
+                except ValueError:
+                    continue  # Skip rows with invalid date formats
+
+                # Determine narration and amount
+                narration = row[col_index["Transaction Remarks"]]
+
+                # Determine transaction amount (debit/credit)
+                withdrawal = row[col_index["Withdrawal Amount (INR )"]].strip()
+                deposit = row[col_index["Deposit Amount (INR )"]].strip()
+
+                if withdrawal and float(withdrawal) != 0.0:
+                    trans_amt = float(withdrawal) * -1.0  # Negative for withdrawals
+                elif deposit and float(deposit) != 0.0:
+                    trans_amt = float(deposit)  # Positive for deposits
                 else:
-                    continue # 0 value transaction
+                    continue  # Skip zero-value transactions
 
+                # Format the amount to two decimal places
                 trans_amt = '{:.2f}'.format(trans_amt)
+                txn_amount = amount.Amount(D(trans_amt), "INR")
 
-                meta = data.new_metadata(f.name, index)
-
+                # Create a Beancount transaction
+                meta = data.new_metadata(filepath, len(entries) + 1)
                 txn = data.Transaction(
                     meta=meta,
-                    date=trans_date,
+                    date=txn_date,
                     flag=flags.FLAG_OKAY,
                     payee="",
-                    narration=trans_desc,
-                    tags=set(),
-                    links=set(),
-                    postings=[],
+                    narration=narration,
+                    tags=data.EMPTY_SET,
+                    links=data.EMPTY_SET,
+                    postings=[
+                        data.Posting(
+                            account=self.account_root,
+                            units=txn_amount,
+                            cost=None,
+                            price=None,
+                            flag=None,
+                            meta={}
+                        )
+                    ],
                 )
-
-                txn.postings.append(
-                    data.Posting(self.account_root, amount.Amount(D(trans_amt),
-                        'INR'), None, None, None, None)
-                )
-
                 entries.append(txn)
 
         return entries
 
 if __name__ == '__main__':
-    importer = Importer(
-        "Assets:IciciBank:Prabu")
+    importer = IciciBankImporter(
+        "Assets:IciciBank:Prabu","1585")
     main(Importer)
