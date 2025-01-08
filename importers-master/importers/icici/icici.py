@@ -8,10 +8,11 @@ In v0.5 modified to support beangulp
 In v0.6 modified to support downloaded file without changing date format or removing lines
 In v0.7 used the functionality from csvbase class
 In v0.8 did further cleanup of code to remove unwanted stuff
+In v0.9 Added identification based on account number. Only external tool required is xls2csv from catdoc package
 """
-__copyright__ = "Copyright (C) 2020  Prabu Anand K"
+__copyright__ = "Copyright (C) 2025  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.8"
+__Version__ = "0.9"
 
 import os
 import re
