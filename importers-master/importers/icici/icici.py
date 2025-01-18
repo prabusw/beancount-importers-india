@@ -14,7 +14,7 @@ __copyright__ = "Copyright (C) 2025  Prabu Anand K"
 __license__ = "GNU GPLv3"
 __Version__ = "0.9"
 
-import os
+# import os
 import re
 from beangulp.importers.csvbase import Importer, Date, Amount, Column
 
@@ -31,22 +31,20 @@ class IciciBankImporter(Importer):
         super().__init__(account, currency)
         self.account_root = account
         self.account_number = account_number
-
     def identify(self, filepath):
-        # Skip non-CSV files based on extension
         if not filepath.lower().endswith('.csv'):
             return False
-
-        """Override the identify method to match account number in the file using regex."""
-        # Regex pattern to match account number, assuming it's a 12-digit number
         account_number_pattern = r'(\d{12})\s*\(.*\)\s*-.*'
-
         with open(filepath, 'r') as file:
-            for row in file:
-                # Search for the account number in the row using regex
-                match = re.search(account_number_pattern, row)
-                if match and match.group(1) == self.account_number:
-                    return True
+        # Only check first 12 lines for account number
+              for _ in range(12):
+                try:
+                    row = next(file)
+                    match = re.search(account_number_pattern, row)
+                    if match and int(match.group(1)) == int(self.account_number):
+                        return True
+                except StopIteration:
+                    break
         return False
 
     def account(self, filepath):
@@ -68,7 +66,7 @@ class IciciBankImporter(Importer):
             # print("Processed row:", row)  # Debug print
             yield row
 
-if __name__ == '__main__':
-    importer = IciciBankImporter(
-        "Assets:IciciBank:Prabu","1585")
-    main(Importer)
+# if __name__ == '__main__':
+#     importer = IciciBankImporter(
+#         "Assets:IciciBank:Prabu","1585")
+#     main(Importer)

@@ -9,6 +9,7 @@ import os
 import re
 from beangulp.importers.csvbase import Importer, Date, Amount, Column
 
+
 class AniruthPurseImporter(Importer):
     """An importer for Aniruth Purse a google sheets based CSV file."""
     skiplines = 0  # Number of garbage lines before header
@@ -23,10 +24,8 @@ class AniruthPurseImporter(Importer):
         self.account_root = account
 
     def identify(self, filepath):
-        # Skip non-CSV files based on extension
-        return filepath.lower().endswith('.csv')
-        # if not filepath.lower().endswith('.csv'):
-            # return False
+        # Skip files based on file name matching
+        return re.match(r'purse.csv$', os.path.basename(filepath)) is not None
 
     def account(self, filepath):
         return self.account_root
