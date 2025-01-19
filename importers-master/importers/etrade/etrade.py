@@ -16,6 +16,7 @@ class ETradeImporter(Importer):
     """An importer for ETrade CSV files."""
 
     # Define columns based on the CSV structure
+    skiplines = 3
     date = Date("TransactionDate", frmt="%m/%d/%y")
     rtype = Column("TransactionType")
     security_type = Column("SecurityType")
@@ -23,12 +24,13 @@ class ETradeImporter(Importer):
     symbol = Column("Symbol", default="")
     amount = Amount("Amount")
     commission = Amount("Commission")
-    quantity = Column("Quantity", default=0)
-    price = Column("Price", default=0)
+    quantity = Amount("Quantity")
+    price = Amount("Price")
 
     def __init__(self, currency, account_root, account_cash, account_dividends,
                  account_gains, account_fees, account_withholdingtax, account_external):
         super().__init__(account_root, currency)
+        self.account_root = account_root
         self.account_cash = account_cash
         self.account_dividends = account_dividends
         self.account_gains = account_gains
@@ -42,8 +44,22 @@ class ETradeImporter(Importer):
         match = re.match(r"etrade\d{6,8}\.csv", filename)
         return match
 
+    def account(self, filepath):
+        return self.account_root
+
+    def read(self, filepath):
+        """Override the read method to compute the amount."""
+        for row in super().read(filepath):
+              # Skip empty rows or rows missing a transaction date
+            if len(row) < 6 or not row[0]:  # assuming the 1st column is the date
+                continue
+            print("Processed row at read method:", row)  # Debug print
+            yield row
+
+
     def finalize(self, txn, row):
         """Customize transaction creation for different transaction types."""
+        print(f"Processing row: {row}")  # Debug row data
 
         desc = f"({row.rtype}) {row.narration}"  # Combine type and description
         txn = txn._replace(narration=desc)  # Update narration in the transaction
@@ -51,14 +67,14 @@ class ETradeImporter(Importer):
 
         # Handle different transaction types
 
-        if row.rtype == "Dividend":
+        if row.rtype in ("Dividend","Qualified Dividend"):
             account_dividends = self.account_dividends.format(row.symbol)
             postings = [
                 data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
                 data.Posting(account_dividends, -amount.Amount(row.amount, self.currency), None, None, None, None),
             ]
 
-        elif row.rtype in ("Tax", "MISC"):
+        elif row.rtype in ("Tax","Tax Withholding","MISC"):
             account_withholdingtax = self.account_withholdingtax.format(row.symbol)
             postings = [
                 data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
