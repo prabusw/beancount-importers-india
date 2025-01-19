@@ -13,12 +13,9 @@ from beangulp.importers.csvbase import Importer, Date, Amount, Column
 
 class CleanAmount(Amount):
     def parse(self, value):
-        # print(f"Original value: '{value}'")  # Debug print
         if value:
             cleaned = value.replace(',', '')
-            # print(f"Cleaned value: '{cleaned}'")  # Debug print
             return super().parse(cleaned)
-        # print("Empty value encountered, returning 0.")  # Debug print
         return 0  # Or any other default handling for empty values
 
 class SBIImporter(Importer):
@@ -57,7 +54,6 @@ class SBIImporter(Importer):
     def read(self, filepath):
         """Override the read method to compute the amount."""
         for row in super().read(filepath):
-            # print("Processed row:", row)  # Debug print
             # Skip empty rows or rows missing a transaction date
             if len(row) < 7 or not row[1]:  # assuming the 3rd column is the date
                 continue
@@ -68,5 +64,4 @@ class SBIImporter(Importer):
                 row.amount = row.deposit  # Positive for deposits
             else:
                 row.amount = 0  # Zero for zero-value transactions
-            # print("Processed row:", row)  # Debug print
             yield row
