@@ -1,40 +1,34 @@
 """Importer for US Stock broker Etrade. This can be used to import transactions from transactions log provided by the broker.
 This is entirely based on the Example importer utrade_csv.py written for example broker UTrade by Beancount author Martin Blais.
+v2.0 converted to beangulp format
 """
 __copyright__ = "Copyright (C) 2020  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.1"
+__Version__ = "0.2"
 
-import csv
-import datetime
+import os
 import re
-import logging
-from os import path
-
-from dateutil.parser import parse
-
-from beancount.core.number import D
-from beancount.core.number import ZERO
-from beancount.core import data
-from beancount.core import account
-from beancount.core import amount
-from beancount.core import position
-from beancount.ingest import importer
+from beancount.core import data, amount, account, position
+from beangulp.importers.csvbase import Importer, Date, Amount, Column
 
 
-class ETradeImporter(importer.ImporterProtocol):
-    """An importer for ETrade CSV files (an example investment bank)."""
+class ETradeImporter(Importer):
+    """An importer for ETrade CSV files."""
 
-    def __init__(self, currency,
-                 account_root,
-                 account_cash,
-                 account_dividends,
-                 account_gains,
-                 account_fees,
-                 account_withholdingtax,
-                 account_external):
-        self.currency = currency
-        self.account_root = account_root
+    # Define columns based on the CSV structure
+    date = Date("TransactionDate", frmt="%m/%d/%y")
+    rtype = Column("TransactionType")
+    security_type = Column("SecurityType")
+    narration = Column("Description", default="None given")
+    symbol = Column("Symbol", default="")
+    amount = Amount("Amount")
+    commission = Amount("Commission")
+    quantity = Column("Quantity", default=0)
+    price = Column("Price", default=0)
+
+    def __init__(self, currency, account_root, account_cash, account_dividends,
+                 account_gains, account_fees, account_withholdingtax, account_external):
+        super().__init__(account_root, currency)
         self.account_cash = account_cash
         self.account_dividends = account_dividends
         self.account_gains = account_gains
@@ -42,118 +36,136 @@ class ETradeImporter(importer.ImporterProtocol):
         self.account_withholdingtax = account_withholdingtax
         self.account_external = account_external
 
-    def identify(self, file):
-        # Match if the filename is as downloaded and the header has the unique
-        # fields combination we're looking for.
-        return (re.match(r"etrade\d\d\d\d\d\d\d\d\.csv", path.basename(file.name)) and
-                re.match("TransactionDate,TransactionType,SecurityType", file.head()))
+    def identify(self, filepath):
+        """Identify if the file matches the expected ETrade CSV format."""
+        filename = os.path.basename(filepath)
+        match = re.match(r"etrade\d{6,8}\.csv", filename)
+        return match
 
-    def extract(self, file):
-        # Open the CSV file and create directives.
-        entries = []
-        index = 0
-        with open(file.name) as infile:
-            for index, row in enumerate(csv.DictReader(infile)):
-                meta = data.new_metadata(file.name, index)
-                date = parse(row['TransactionDate']).date()
-                rtype = row['TransactionType']
-                link = "ut{0[SecurityType]}".format(row)
-                desc = "({0[TransactionType]}) {0[Description]}".format(row)
-                units = amount.Amount(D(row['Amount']), self.currency)
-                fees = amount.Amount(D(row['Commission']), self.currency)
-                other = amount.add(units, fees)
-                instrument = row['Symbol']
-                rate = D(row['Price'])
+    def finalize(self, txn, row):
+        """Customize transaction creation for different transaction types."""
 
-                if rtype == 'Dividend':
-                    assert fees.number == ZERO
+        desc = f"({row.rtype}) {row.narration}"  # Combine type and description
+        txn = txn._replace(narration=desc)  # Update narration in the transaction
+        postings = []
 
-                    account_dividends = self.account_dividends.format(instrument)
+        # Handle different transaction types
 
-                    txn = data.Transaction(
-                        meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                            data.Posting(self.account_cash, units, None, None, None, None),
-                            data.Posting(account_dividends, -other, None, None, None, None),
-                        ])
-                    
-                # elif rtype == 'Tax':
-                elif rtype in ('Tax', 'MISC'):    
-                    assert fees.number == ZERO
+        if row.rtype == "Dividend":
+            account_dividends = self.account_dividends.format(row.symbol)
+            postings = [
+                data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
+                data.Posting(account_dividends, -amount.Amount(row.amount, self.currency), None, None, None, None),
+            ]
 
-                    account_withholdingtax = self.account_withholdingtax.format(instrument)
+        elif row.rtype in ("Tax", "MISC"):
+            account_withholdingtax = self.account_withholdingtax.format(row.symbol)
+            postings = [
+                data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
+                data.Posting(account_withholdingtax, -amount.Amount(row.amount, self.currency), None, None, None, None),
+            ]
 
-                    txn = data.Transaction(
-                        meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                            data.Posting(self.account_cash, units, None, None, None, None),
-                            data.Posting(account_withholdingtax, -other, None, None, None, None),
-                        ])    
+        elif row.rtype == "Interest":
+            postings = [
+                data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
+                data.Posting(self.account_external, -amount.Amount(row.amount, self.currency), None, None, None, None),
+            ]
 
-                elif rtype == 'Interest':
-                    assert fees.number == ZERO
-                    txn = data.Transaction(
-                        meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                            data.Posting(self.account_cash, units, None, None, None,
-                                         None),
-                            data.Posting(self.account_external, -other, None, None, None,
-                                         None),
-                        ])
+        elif row.rtype in ("Wire", "Fee"):
+            postings = [
+                data.Posting(self.account_cash, -amount.Amount(row.amount, self.currency), None, None, None, None),
+                data.Posting("Expenses:FixMe", amount.Amount(row.amount, self.currency), None, None, None, None),
+            ]
 
-                elif rtype in ('Wire', 'Fee'):
-                    # assert fees.number == ZERO
-                    txn = data.Transaction(
-                        meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                            data.Posting(self.account_cash, -units, None, None, None,
-                                         None),
-                            data.Posting("Expenses:FixMe", other, None, None, None,
-                                         None),
-                        ])
+        elif row.rtype in ("Bought", "Sold"):
+            account_inst = account.join(self.account_root, row.symbol)
+            units_inst = amount.Amount(row.quantity, row.symbol)
+            cost = position.Cost(row.price, self.currency, None, None)
+            if row.rtype == "Bought":
+                postings = [
+                    data.Posting(self.account_cash, -amount.Amount(row.amount, self.currency), None, None, None, None),
+                    data.Posting(self.account_fees, amount.Amount(row.commission, self.currency), None, None, None, None),
+                    data.Posting(account_inst, units_inst, cost, None, None, None),
+                ]
+            elif row.rtype == "Sold":
+                postings = [
+                    data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
+                    data.Posting(self.account_fees, amount.Amount(row.commission, self.currency), None, None, None, None),
+                    data.Posting(account_inst, -units_inst, cost, None, None, None),
+                ]
+
+        else:
+            print(f"Skipping unknown transaction type: {row.rtype}")
+            return None
+
+        # Replace transaction postings
+        txn = txn._replace(postings=postings)
+        return txn
 
 
-                elif rtype in ('Bought', 'Sold'):
+        # print(f"Processing row: {row}")  # Debug row data
+        # desc = f"({row.rtype}) {row.description}"
+        # units = amount.Amount(row.amount, self.currency)
+        # fees = amount.Amount(row.commission, self.currency)
+        # other = amount.add(units, fees)
+        # instrument = row.symbol
+        # rate = row.price
 
-                    account_inst = account.join(self.account_root, instrument)
-                    units_inst = amount.Amount(D(row['Quantity']), instrument)
-                    
+        # # Handle different transaction types
+        # postings = []
+        # if row.rtype == "Dividend":
+        #     account_dividends = self.account_dividends.format(instrument)
+        #     postings = [
+        #         data.Posting(self.account_cash, units, None, None, None, None),
+        #         data.Posting(account_dividends, -other, None, None, None, None),
+        #     ]
 
-                    if rtype == 'Bought':
-                        cost = position.Cost(rate, self.currency, None, None)
-                        txn = data.Transaction(
-                            meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                                data.Posting(self.account_cash, units, None, None, None,
-                                             None),
-                                data.Posting(self.account_fees, fees, None, None, None,
-                                             None),
-                                data.Posting(account_inst, units_inst, cost, None, None,
-                                             None),
-                            ])
+        # elif row.rtype in ("Tax", "MISC"):
+        #     account_withholdingtax = self.account_withholdingtax.format(instrument)
+        #     postings = [
+        #         data.Posting(self.account_cash, units, None, None, None, None),
+        #         data.Posting(account_withholdingtax, -other, None, None, None, None),
+        #     ]
 
-                    elif rtype == 'Sold':
-                        # Extract the lot. In practice this information not be there
-                        # and you will have to identify the lots manually by editing
-                        # the resulting output. You can leave the cost.number slot
-                        # set to None if you like.
-                        cost_number = None
-                        cost = position.Cost(cost_number, self.currency, None, None)
-                        price = amount.Amount(rate, self.currency)
-                        account_gains = self.account_gains.format(instrument)
-                        txn = data.Transaction(
-                            meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                                data.Posting(self.account_cash, units, None, None, None,
-                                             None),
-                                data.Posting(self.account_fees, fees, None, None, None,
-                                             None),
-                                data.Posting(account_inst, units_inst, cost, price, None,
-                                             None),
-                                data.Posting(account_gains, None, None, None, None,
-                                             None),
-                            ])
+        # elif row.rtype == "Interest":
+        #     postings = [
+        #         data.Posting(self.account_cash, units, None, None, None, None),
+        #         data.Posting(self.account_external, -other, None, None, None, None),
+        #     ]
 
-                else:
-                    logging.error("Unknown row type: %s; skipping", rtype)
-                    continue
+        # elif row.rtype in ("Wire", "Fee"):
+        #     postings = [
+        #         data.Posting(self.account_cash, -units, None, None, None, None),
+        #         data.Posting("Expenses:FixMe", other, None, None, None, None),
+        #     ]
 
-                entries.append(txn)
+        # elif row.rtype in ("Bought", "Sold"):
+        #     account_inst = account.join(self.account_root, instrument)
+        #     units_inst = amount.Amount(row.quantity, instrument)
+        #     if row.rtype == "Bought":
+        #         cost = position.Cost(rate, self.currency, None, None)
+        #         postings = [
+        #             data.Posting(self.account_cash, units, None, None, None, None),
+        #             data.Posting(self.account_fees, fees, None, None, None, None),
+        #             data.Posting(account_inst, units_inst, cost, None, None, None),
+        #         ]
+        #     elif row.rtype == "Sold":
+        #         cost_number = None
+        #         cost = position.Cost(cost_number, self.currency, None, None)
+        #         price = amount.Amount(rate, self.currency)
+        #         account_gains = self.account_gains.format(instrument)
+        #         postings = [
+        #             data.Posting(self.account_cash, units, None, None, None, None),
+        #             data.Posting(self.account_fees, fees, None, None, None, None),
+        #             data.Posting(account_inst, units_inst, cost, price, None, None),
+        #             data.Posting(account_gains, None, None, None, None, None),
+        #         ]
 
-        # Insert a final balance check.
-       
-        return entries
+        # else:
+        #     # Skip unknown row types
+        #     print(f"Skipping unknown row type: {row.rtype}")
+        #     return None
+
+        # # Replace the transaction with updated postings and description
+        # txn = txn._replace(narration=desc, postings=postings)
+        # return txn
