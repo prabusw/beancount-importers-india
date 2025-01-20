@@ -3,10 +3,11 @@ This script is heavily based on the script importers-chase.py  by Matt Terwillig
 Original script can be found here https://gist.github.com/mterwill/7fdcc573dc1aa158648aacd4e33786e8
 v0.2 - made changes to automatically recognize credit and Debit transactions by changing sign based on importers-schwab.py script
 v0.3 - modified to support beangulp
+v0.4 - Use the script tsv2csv.sh script to convert tsv(appears with extension xls when downloaded) to csv
 """
 __copyright__ = "Copyright (C) 2025  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.3"
+__Version__ = "0.4"
 
 import re
 from beangulp.importers.csvbase import Importer, Date, Amount, Column
@@ -20,7 +21,7 @@ class CleanAmount(Amount):
 
 class SBIImporter(Importer):
     """An importer for SBI Bank xls files converted to csv by google docs."""
-    skiplines = 20  # Skip the first 20 lines before reading the header
+    skiplines = 18  # Skip the first 20 lines for savings, 18 for PPF before reading the header
     date = Date("Value Date", frmt="%d %b %Y")
     narration = Column("Description")
     withdrawal = CleanAmount("Debit")
@@ -34,8 +35,7 @@ class SBIImporter(Importer):
     def identify(self, filepath):
         if not filepath.lower().endswith('.csv'):
             return False
-        # account_number_pattern = r'(\d{11})\s*\(.*\)\s*-.*'
-        account_number_pattern = r'Account Number\s*:\s*,\s*_?(\d+)'
+        account_number_pattern = r'Account Number\s*:\s*,?\s*_?(\d+)'
         with open(filepath, 'r') as file:
         # Only check first 20 lines for account number
               for _ in range(20):

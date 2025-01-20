@@ -17,7 +17,7 @@ class ETradeImporter(Importer):
     """An importer for ETrade CSV files."""
 
     # Define columns based on the CSV structure
-    skiplines = 3
+    # skiplines = 3
     date = Date("TransactionDate", frmt="%m/%d/%y")
     rtype = Column("TransactionType")
     security_type = Column("SecurityType")
