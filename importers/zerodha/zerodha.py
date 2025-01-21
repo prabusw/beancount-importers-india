@@ -1,39 +1,43 @@
+
 """Importer for leading Indian Stock broker Zerodha. This can be used to import transactions from Tradebook provided by the broker.
 This is entirely based on the Example importer utrade_csv.py written for example broker UTrade by Beancount author Martin Blais.
-version 0.2 removes the {link} from transaction postings. link = "{0[order_id]}".format(row). It is now data.EMPTY_SET   
-Version 0.3 involves changes to reflect changes aligned to actual download of Zerodha Tradebook """
+v0.2 removes the {link} from transaction postings. link = "{0[order_id]}".format(row). It is now data.EMPTY_SET
+v0.3 involves changes to reflect changes aligned to actual download of Zerodha Tradebook
+v0.4 converted to beangulp format"""
 
-__copyright__ = "Copyright (C) 2020  Prabu Anand K"
+__copyright__ = "Copyright (C) 2020-2025  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.3"
-
-import csv
-import datetime
+__Version__ = "0.4"
+import os
 import re
-import logging
-from os import path
-
-from dateutil.parser import parse
-
+from beancount.core import data, amount, account, position
 from beancount.core.number import D
-from beancount.core.number import ZERO
-from beancount.core import data
-from beancount.core import account
-from beancount.core import amount
-from beancount.core import position
-from beancount.ingest import importer
+from beangulp.importers.csvbase import Importer, Date, Amount, Column
 
+class ZerodhaImporter(Importer):
+    """An importer for Zerodha CSV files."""
 
-class ZerodhaImporter(importer.ImporterProtocol):
-    """An importer for Zerodha CSV files (an example investment bank)."""
+    # Define the FLAG attribute
+    FLAG = '*'
 
-    def __init__(self, currency,
-                 account_root,
-                 account_cash,
-                 account_dividends,
-                 account_gains,
-                 account_fees,
-                 account_external):
+    # Define columns based on the current CSV structure
+    symbol = Column("symbol")
+    date = Date("trade_date", frmt="%Y-%m-%d")
+    exchange = Column("exchange")
+    segment = Column("segment")
+    trade_type = Column("trade_type")
+    quantity = Amount("quantity")
+    price = Amount("price")
+    trade_id = Column("trade_id")
+    order_id = Column("order_id")
+    # isin = Column("isin")
+    # series = Column("series")
+    # auction = Column("auction")
+    # execution_time = Column("order_execution_time")
+
+    def __init__(self, currency, account_root, account_cash, account_dividends,
+                 account_gains, account_fees, account_external):
+        super().__init__(account_root, currency)
         self.currency = currency
         self.account_root = account_root
         self.account_cash = account_cash
@@ -42,75 +46,98 @@ class ZerodhaImporter(importer.ImporterProtocol):
         self.account_fees = account_fees
         self.account_external = account_external
 
-    def identify(self, file):
-        # Match if the filename is as downloaded and the header has the unique
-        # fields combination we're looking for.
-        return (re.match(r"zerodha\d\d\d\d\d\d\d\d\.csv", path.basename(file.name)) and
-                re.match("trade_date,tradingsymbol", file.head()))
+    # def identify(self, filepath):
+    #     """Identify if this is a Zerodha CSV file."""
+    #     if not filepath.endswith('.csv'):
+    #         return False
+    #     try:
+    #         with open(filepath, 'r') as file:
+    #             header = file.readline().strip()
+    #             expected = "symbol,isin,trade_date,exchange,segment,series,trade_type,auction,quantity,price,trade_id,order_id,order_execution_time"
+    #             return header == expected
+    #     except Exception:
+    #         return False
 
-    def extract(self, file):
-        # Open the CSV file and create directives.
+    def identify(self, filepath):
+        """Identify if this is a Zerodha CSV file."""
+        if not filepath.endswith('.csv'):
+            return False
+        filename = os.path.basename(filepath)
+        match = re.match(r"zerodha\d{6,8}\.csv", filename)
+        return match
+
+    def extract(self, filepath, existing):
         entries = []
-        index = 0
-        with open(file.name) as infile:
-            for index, row in enumerate(csv.DictReader(infile)):
-                meta = data.new_metadata(file.name, index)
-                date = parse(row['trade_date']).date()
-                rtype = row['trade_type']
-                link = "{0[tradingsymbol]}".format(row)
-                desc = "{0[trade_type]} {0[tradingsymbol]} with TradeRef {0[trade_id]}".format(row)
-                units = amount.Amount(D(row['amount']), self.currency)
-                fees = amount.Amount(D(row['fees']), self.currency)
-                b_value = amount.add(units, fees)
-                s_value = amount.add(units, -fees)
-                instrument = row['tradingsymbol']
-                rate = D(row['price'])
 
-                if rtype in ('buy', 'sell'):
+        for index, row in enumerate(self.read(filepath)):
+            meta = data.new_metadata(filepath, index)
+            # meta['trade_id'] = row.trade_id
+            # meta['order_id'] = row.order_id
+            # meta['exchange'] = row.exchange
+            # meta['segment'] = row.segment
+            # meta['execution_time'] = row.execution_time
 
-                    account_inst = account.join(self.account_root, instrument)
-                    units_inst = amount.Amount(D(row['quantity']), instrument)
-                    
+            try:
+                # Calculate amount and fees from quantity and price
+                total_amount = D(str(row.quantity)) * D(str(row.price))
+                fees = total_amount * D('0.001')  # 0.1% fee
 
-                    if rtype == 'buy':
-                        cost = position.Cost(rate, self.currency, None, None)
+
+                # Create the amounts needed for postings
+                fee_amount = amount.Amount(fees, self.currency)
+                b_value = amount.Amount(total_amount + fees, self.currency)
+                s_value = amount.Amount(total_amount - fees, self.currency)
+
+                desc = f"{row.trade_type} {row.symbol} with OrderID {row.order_id} and Trade Id {row.trade_id}"
+
+                if row.trade_type.lower() in ('buy', 'sell'):
+                    account_inst = account.join(self.account_root, row.symbol)
+                    units_inst = amount.Amount(D(str(row.quantity)), row.symbol)
+
+                    if row.trade_type.lower() == 'buy':
+                        cost = position.Cost(D(str(row.price)), self.currency, None, None)
                         txn = data.Transaction(
-                            meta, date, self.FLAG, None, desc, data.EMPTY_SET,data.EMPTY_SET,  [
-                                data.Posting(self.account_cash, -b_value, None, None, None,
-                                             None),
-                                data.Posting(self.account_fees, fees, None, None, None,
-                                             None),
-                                data.Posting(account_inst, units_inst, cost, None, None,
-                                             None),
+                            meta=meta,
+                            date=row.date,
+                            flag=self.FLAG,
+                            payee=None,
+                            narration=desc,
+                            tags=data.EMPTY_SET,
+                            links=data.EMPTY_SET,
+                            postings=[
+                                data.Posting(self.account_cash, -b_value, None, None, None, None),
+                                data.Posting(self.account_fees, fee_amount, None, None, None, None),
+                                data.Posting(account_inst, units_inst, cost, None, None, None),
                             ])
 
-                    elif rtype == 'sell':
-                        # Extract the lot. In practice this information not be there
-                        # and you will have to identify the lots manually by editing
-                        # the resulting output. You can leave the cost.number slot
-                        # set to None if you like.
+                    elif row.trade_type.lower() == 'sell':
                         cost_number = None
                         cost = position.Cost(cost_number, self.currency, None, None)
-                        price = amount.Amount(rate, self.currency)
-                        account_gains = self.account_gains.format(instrument)
+                        price = amount.Amount(D(str(row.price)), self.currency)
+                        account_gains = self.account_gains.format(row.symbol)
                         txn = data.Transaction(
-                            meta, date, self.FLAG, None, desc, data.EMPTY_SET,data.EMPTY_SET,  [
-                                data.Posting(self.account_cash, s_value, None, None, None,
-                                             None),
-                                data.Posting(self.account_fees, fees, None, None, None,
-                                             None),
-                                data.Posting(account_inst, -units_inst, cost, price, None,
-                                             None),
-                                data.Posting(account_gains, None, None, None, None,
-                                             None),
+                            meta=meta,
+                            date=row.date,
+                            flag=self.FLAG,
+                            payee=None,
+                            narration=desc,
+                            tags=data.EMPTY_SET,
+                            links=data.EMPTY_SET,
+                            postings=[
+                                data.Posting(self.account_cash, s_value, None, None, None, None),
+                                data.Posting(self.account_fees, fee_amount, None, None, None, None),
+                                data.Posting(account_inst, -units_inst, cost, price, None, None),
+                                data.Posting(account_gains, None, None, None, None, None),
                             ])
 
-                else:
-                    logging.error("Unknown row type: %s; skipping", rtype)
-                    continue
+                    entries.append(txn)
 
-                entries.append(txn)
+            except (AttributeError, ValueError) as e:
+                print(f"Error processing row {index}: {e}")
+                continue
 
-        # Insert a final balance check.
-        
         return entries
+
+    def account(self, filepath):
+        """Return account associated with this importer."""
+        return self.account_root
