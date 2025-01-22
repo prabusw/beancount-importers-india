@@ -35,6 +35,7 @@ class IciciBankImporter(Importer):
         if not filepath.lower().endswith('.csv'):
             return False
         account_number_pattern = r'(\d{12})\s*\(.*\)\s*-.*'
+
         with open(filepath, 'r') as file:
         # Only check first 12 lines for account number
               for _ in range(12):

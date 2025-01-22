@@ -38,7 +38,7 @@ class SBIImporter(Importer):
         account_number_pattern = r'Account Number\s*:\s*,?\s*_?(\d+)'
         with open(filepath, 'r') as file:
         # Only check first 20 lines for account number
-              for _ in range(20):
+              for _ in range(18):
                 try:
                     row = next(file)
                     match = re.search(account_number_pattern, row)

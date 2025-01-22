@@ -82,7 +82,6 @@ class ZerodhaImporter(Importer):
                 total_amount = D(str(row.quantity)) * D(str(row.price))
                 fees = total_amount * D('0.001')  # 0.1% fee
 
-
                 # Create the amounts needed for postings
                 fee_amount = amount.Amount(fees, self.currency)
                 b_value = amount.Amount(total_amount + fees, self.currency)

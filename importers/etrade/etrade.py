@@ -12,7 +12,6 @@ import re
 from beancount.core import data, amount, account, position
 from beangulp.importers.csvbase import Importer, Date, Amount, Column
 
-
 class ETradeImporter(Importer):
     """An importer for ETrade CSV files."""
 
@@ -49,7 +48,6 @@ class ETradeImporter(Importer):
         filename = os.path.basename(filepath)
         match = re.match(r"etrade\d{6,8}\.csv", filename)
         return match
-
 
     def account(self, filepath):
         return self.account_root
@@ -124,7 +122,6 @@ class ETradeImporter(Importer):
                 data.Posting("Expenses:FixMe", amount.Amount(row.amount, self.currency), None, None, None, None),
             ]
             # return None
-
 
         # Replace transaction postings
         txn = txn._replace(postings=postings)
