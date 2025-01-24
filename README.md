@@ -3,14 +3,14 @@ This repository has few Importers for [Beancount](https://github.com/beancount/b
 The available importers are for:
 
  Indian Banks like
-    Icici Bank
-    SBI
-    KVB
-    IOB
+    - Icici Bank
+    - SBI
+    - KVB
+    - IOB
 
 Stock brokers like
-    Zerodha - India
-    E*Trade - US
+    - Zerodha - India
+    - E*Trade - US
 
 ## Folder Structure
 
