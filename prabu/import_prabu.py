@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
 """
 v0.1 Based on https://raw.githubusercontent.com/beancount/beangulp/refs/heads/master/examples/import.py
+v0.2 updated all the importers to beangulp format
 """
 __copyright__ = "Copyright (C) 2025  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.1"
+__Version__ = "0.2"
 
 
 # importers located in the importers directory
 from importers.icici import icici
 from importers.sbi import sbi
+from importers.iob import iob
 from importers.etrade import etrade
+from importers.zerodha import zerodha
+from importers.kgi import kgi
+from importers.kvb import kvb
 from beancount.core import data
 
 import beangulp
 
 importers = [
-    # icici.IciciBankImporter("Assets:IciciBank:Prabu","1585"),
     icici.IciciBankImporter("Assets:IN:ICICIBank:Prabu","XXXXXXXXXXX"),
     sbi.SBIImporter("Assets:IN:SBI:Savings","XXXXXXXXXXX"),
+    kvb.KVBImporter("Assets:IN:KVB:Savings","XXXXXXXXXXXXXXX"),
+    iob.IOBImporter("Assets:IN:IOB:Savings:Prabu","3286"),
     etrade.ETradeImporter("USD",
                         "Assets:US:ETrade",
                         "Assets:US:ETrade:Cash",
@@ -27,6 +33,24 @@ importers = [
                         "Expenses:Financial:Fees:ETrade",
                         "Expenses:US:WithholdingTax:{}",
                         "Income:US:Interest:ETrade"),
+    zerodha.ZerodhaImporter("INR",
+                            "Assets:IN:Zerodha",
+                            "Assets:IN:Zerodha:Cash",
+                            "Income:IN:Zerodha:{}:Dividend",
+                            "Income:IN:Zerodha:{}:PnL",
+                            "Expenses:Financial:Fees:Zerodha",
+                            "Assets:IN:ICICIBank:Savings"),
+    kgi.KGIImporter("THB",
+                    "Assets:TH:Investment:KGI",
+                    "Assets:TH:Investment:KGI:Cash",
+                    "Income:TH:Investment:{}:Dividend",
+                    "Income:TH:Investment:{}:PnL",
+                    "Expenses:Financial:Fees:KGI",
+                    "Expenses:TH:WithholdingTax:{}",
+                    "Income:TH:Interest:KGI",
+                    "Assets:TH:Investment:KGI:Cash",
+                    "Assets:SG:Investment:DBS:Savings:Prabu",
+                    ),
 ]
 
 def clean_up_descriptions(extracted_entries):
