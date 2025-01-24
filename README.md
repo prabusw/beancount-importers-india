@@ -20,6 +20,19 @@ replaced the config.py files used earlier. The ledger is my.beancount.
 ![folder
 structure](https://github.com/prabusw/beancount-importer-zerodha/blob/master/folderstructure.png)
 
+## Using the Importers
+
+The command to use this beangulp based importer to identify, extract
+and archive is given below:
+
+```
+$./import_prabu.py [option] Downloads/
+where option can be identify|extract|archive
+```
+Depending on the number of matching csv files available in Downloads
+folder, the beancount formatted output will be displayed one by
+one. You can redirect it to new txt file and copy paste it later to
+my.beancount.
 
 ## Importer for Banks
 
@@ -67,17 +80,3 @@ The csv formatted transaction statement downloaded from E*Trade
 website can be used without any modifications using the given
 importer. The TransactionType in importer code may need adjustments,
 if rows are skipped.
-
-## Using the Importers
-
-The command to use this beangulp based importer to identify, extract
-and archive is given below:
-
-```
-$./import_prabu.py [option] Downloads/
-where option can be identify|extract|archive
-```
-Depending on the number of matching csv files available in Downloads
-folder, the beancount formatted output will be displayed one by
-one. You can redirect it to new txt file and copy paste it later to
-my.beancount.
