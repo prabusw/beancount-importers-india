@@ -1,13 +1,18 @@
 This repository has few Importers for [Beancount](https://github.com/beancount/beancount), a plain text accounting software.
-These importers are mainly related to:
-Indian Banks like
-* Icici Bank
-* SBI
-* KVB
-* IOB
-Stock brokers like
-* Zerodha - India
-* E*Trade - US
+
+The available importers are for:
+
+* Indian Banks like
+
+** Icici Bank
+** SBI
+** KVB
+** IOB
+
+* Stock brokers like
+
+** Zerodha - India
+** E*Trade - US
 
 ## Folder Structure
 
