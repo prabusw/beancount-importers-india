@@ -70,8 +70,8 @@ if rows are skipped.
 
 ## Using the Importers
 
-The command(linux) to use beangulp to identify, extract and archive is
-given below.
+The command to use this beangulp based importer to identify, extract
+and archive is given below:
 
 ```
 $./import_prabu.py [option] Downloads/
