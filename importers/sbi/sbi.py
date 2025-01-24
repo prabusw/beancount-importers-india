@@ -20,7 +20,7 @@ class CleanAmount(Amount):
         return 0  # Or any other default handling for empty values
 
 class SBIImporter(Importer):
-    """An importer for SBI Bank xls files converted to csv by google docs."""
+    """An importer for SBI Bank xls file downloaded and converted to csv by tsv2csv.sh script in tools folder"""
     skiplines = 18  # Skip the first 20 lines for savings, 18 for PPF before reading the header
     date = Date("Value Date", frmt="%d %b %Y")
     narration = Column("Description")
