@@ -1,6 +1,6 @@
-This repository has few Importers for [Beancount](https://github.com/beancount/beancount), a plain text accounting software.
-
-The available importers are for:
+This repository has few Importers for
+[Beancount](https://github.com/beancount/beancount), a plain text
+accounting software. The available importers are for:
 
  Indian Banks like
  - Icici Bank
