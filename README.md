@@ -9,7 +9,15 @@ Stock brokers like
 * Zerodha - India
 * E*Trade - US
 
-# Importers
+## Folder Structure
+
+In beangulp, the importers are called by an import_XXX.py which has
+replaced the config.py files used earlier. The ledger is my.beancount.
+
+![folder
+structure](https://github.com/prabusw/beancount-importer-zerodha/blob/master/folderstructure.png)
+
+
 ## Importer for Zerodha
 
 This is an importer for csv formatted tradebook from Indian stock
@@ -26,14 +34,6 @@ symbol,isin,trade_date,exchange,segment,series,trade_type,auction,quantity,price
 Just ensure that the csv file is named as zerodhaNNNNNNNN.csv
 format. For example, zerodha20232024.csv is a valid filename.
 
-In beangulp, the importers are called by an import_XXX.py which has
-replaced the config.py files used earlier.
-The actual ledger can be like my.beancount.
-
-
-![folder
-structure](https://github.com/prabusw/beancount-importer-zerodha/blob/master/folderstructure.png)
-
 
 ## Importer for Banks
 
@@ -46,6 +46,20 @@ following columns.
 ```
 S No.	Value Date	Transaction Date	Cheque Number	Transaction Remarks	Withdrawal Amount (INR )	Deposit Amount (INR )	Balance (INR )
 ```
+
+When downloading SBI transaction statements, if xls is choosen, the
+file will be in tsv format even though the file will get downloaded
+with .xls extension. Use the tsv2csv.sh script in tools folder to
+convert this to csv format.
+
+Almost all the other bank importers like IOB and KVB work with the csv
+file(s) downloaded from their respective bank website, without any
+modification.
+
+If the downloaded csv has the account number in it, then use it in
+your importer config file.
+
+## Using the Importers
 
 The command(linux) to use beangulp to identify, extract and archive is
 given below.
