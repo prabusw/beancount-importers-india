@@ -48,7 +48,7 @@ class KGIImporter(Importer):
         if not filepath.endswith('.csv'):
             return False
         filename = os.path.basename(filepath)
-        match = re.match(r"1kgi\d{6,8}\.csv", filename)
+        match = re.match(r"kgi\d{6,8}\.csv", filename)
         return match
 
     def extract(self, filepath, existing):
