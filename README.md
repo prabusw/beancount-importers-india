@@ -21,23 +21,6 @@ replaced the config.py files used earlier. The ledger is my.beancount.
 structure](https://github.com/prabusw/beancount-importer-zerodha/blob/master/folderstructure.png)
 
 
-## Importer for Zerodha
-
-This is an importer for csv formatted tradebook from Indian stock
-broker Zerodha. Every decent broker in India, gives similar tradebook.
-So this importer can work almost for every broker who provides
-tradebook in csv format.
-
-As of Jan'2025 the csv formatted tradebook downloaded from Zerodha has
-the following fields:
-
-```
-symbol,isin,trade_date,exchange,segment,series,trade_type,auction,quantity,price,trade_id,order_id,order_execution_time
-```
-Just ensure that the csv file is named as zerodhaNNNNNNNN.csv
-format. For example, zerodha20232024.csv is a valid filename.
-
-
 ## Importer for Banks
 
 The importer script icici.py can be used to handle the csv formatted
@@ -61,6 +44,29 @@ modification.
 
 If the downloaded csv has the account number in it, then use it in
 your importer config file.
+
+## Importer for Brokers
+
+### Zerodha
+The importer for Indian stock broker Zerodha works with the csv
+formatted tradebook downloaded from their website. Every decent
+broker in India, gives similar tradebook.  So this importer can work
+almost for every broker who provides tradebook in csv format.
+
+As of Jan'2025 the csv formatted tradebook downloaded from Zerodha has
+the following fields:
+
+```
+symbol,isin,trade_date,exchange,segment,series,trade_type,auction,quantity,price,trade_id,order_id,order_execution_time
+```
+Just ensure that the csv file is named as zerodhaNNNNNNNN.csv
+format. For example, zerodha20232024.csv is a valid filename.
+
+### E*Trade
+The csv formatted transaction statement downloaded from E*Trade
+website can be used without any modifications using the given
+importer. The TransactionType in importer code may need adjustments,
+if rows are skipped.
 
 ## Using the Importers
 
