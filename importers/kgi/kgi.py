@@ -1,41 +1,36 @@
-"""Importer for Thailand Stock broker KGI. The trade log has to be manually created in csv format.
+"""Importer for Thailand Stock broker KGI. The entries are to be manually created in csv format.
 This is entirely based on the Example importer utrade_csv.py written for example broker UTrade by Beancount author Martin Blais.
-In v0.2, changes made to account for dividend cheque handling
+v0.2, changes made to account for dividend cheque handling
+v0.3, added beangulp support
 """
-__copyright__ = "Copyright (C) 2020  Prabu Anand K"
+__copyright__ = "Copyright (C) 2020-2025  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.2"
+__Version__ = "0.3"
 
-import csv
-import datetime
+import os
 import re
-import logging
-from os import path
-
-from dateutil.parser import parse
-
+from beancount.core import data, amount, account, position
 from beancount.core.number import D
-from beancount.core.number import ZERO
-from beancount.core import data
-from beancount.core import account
-from beancount.core import amount
-from beancount.core import position
-from beancount.ingest import importer
+from beangulp.importers.csvbase import Importer, Date, Amount, Column
 
-
-class KGIImporter(importer.ImporterProtocol):
+class KGIImporter(Importer):
     """An importer for KGI CSV files."""
 
-    def __init__(self, currency,
-                 account_root,
-                 account_cash,
-                 account_dividends,
-                 account_gains,
-                 account_fees,
-                 account_external,
-                 account_fxfees,
-                 account_fxdividend,
-                 account_withholdingtax):
+    FLAG = '*'
+
+    symbol = Column("Symbol")
+    date = Date("TransactionDate", frmt="%Y-%m-%d")
+    transaction_type = Column("TransactionType")
+    quantity = Amount("Quantity")
+    price = Amount("Price")
+    value = Amount("Value")
+    commission = Amount("Commission")
+    withholding_tax = Amount("Tax")
+    amount = Amount("Amount")
+
+    def __init__(self, currency, account_root, account_cash, account_dividends,
+                 account_gains, account_fees, account_withholdingtax, account_interest, account_external, account_fxdividend):
+        super().__init__(account_root, currency)
         self.currency = currency
         self.account_root = account_root
         self.account_cash = account_cash
@@ -43,107 +38,124 @@ class KGIImporter(importer.ImporterProtocol):
         self.account_gains = account_gains
         self.account_fees = account_fees
         self.account_external = account_external
-        self.account_fxfees = account_fxfees
         self.account_fxdividend = account_fxdividend
-        self.account_withholdingtax = account_withholdingtax        
+        self.account_withholdingtax = account_withholdingtax
+        self.account_interest = account_interest
 
-    def identify(self, file):
-        # Match if the filename is as downloaded and the header has the unique
-        # fields combination we're looking for.
-        return (re.match(r"kgi\d\d\d\d\d\d\d\d\.csv", path.basename(file.name)) and
-                re.match("TransactionDate,TransactionType,Symbol,", file.head()))
 
-    def extract(self, file):
-        # Open the CSV file and create directives.
+    def identify(self, filepath):
+        """Identify if this is a KGI CSV file."""
+        if not filepath.endswith('.csv'):
+            return False
+        filename = os.path.basename(filepath)
+        match = re.match(r"1kgi\d{6,8}\.csv", filename)
+        return match
+
+    def extract(self, filepath, existing):
         entries = []
-        index = 0
-        with open(file.name) as infile:
-            for index, row in enumerate(csv.DictReader(infile)):
-                meta = data.new_metadata(file.name, index)
-                date = parse(row['TransactionDate']).date()
-                rtype = row['TransactionType']
-                #link = "ut{0[SecurityType]}".format(row)
-                desc = "({0[TransactionType]})({0[Symbol]}) {0[Description]}".format(row)
-                units = amount.Amount(D(row['Amount']), self.currency)
-                originaldividend = amount.Amount(D(row['Dividend']), self.currency)
-                fees = amount.Amount(D(row['Commission']), self.currency)
-                other = amount.add(units, fees)
-                instrument = row['Symbol']
-                rate = D(row['Price'])
-                fxcomission = amount.Amount(D(row['FxCommission']), self.currency)
-                withholdingtax = amount.Amount(D(row['Withholding Tax']), self.currency)
-                fxmoney = amount.Amount(D(row['FxAmount']),self.currency)
-                
 
-                if rtype == 'Dividend':
-                    assert fees.number == ZERO
+        for index, row in enumerate(self.read(filepath)):
+            meta = data.new_metadata(filepath, index)
 
-                    account_dividends = self.account_dividends.format(instrument)
-                    account_withholdingtax = self.account_withholdingtax.format(instrument)
+            try:
+                desc = f"{row.transaction_type} {row.symbol}"
+                fees = amount.Amount(D(str(row.commission)), self.currency)
+                account_withholdingtax = self.account_withholdingtax.format(row.symbol)
+
+
+                if row.transaction_type == 'Dividend':
+
+                    account_dividends = self.account_dividends.format(row.symbol)
+                    withholding_tax = amount.Amount(D(str(row.withholding_tax)), self.currency)
+                    dividend = amount.Amount(D(str(row.value)), self.currency)
+                    f_amount = amount.Amount(D(str(row.amount)), self.currency)
 
                     txn = data.Transaction(
-                        meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                            data.Posting(account_dividends, -originaldividend, None, None, None, None),
-                            data.Posting(account_withholdingtax, withholdingtax, None, None, None, None),
-                            data.Posting(self.account_fxfees, fxcomission, None, None, None, None),
-                            data.Posting(self.account_fxdividend, fxmoney, None, None, None, None),
+                        meta=meta,
+                        date=row.date,
+                        flag=self.FLAG,
+                        payee=None,
+                        narration=desc,
+                        tags=data.EMPTY_SET,
+                        links=data.EMPTY_SET,
+                        postings=[
+                            data.Posting(account_dividends, -dividend, None, None, None, None),
+                            data.Posting(account_withholdingtax, withholding_tax, None, None, None, None),
+                            data.Posting(self.account_fees, fees, None, None, None, None),
+                            data.Posting(self.account_external, f_amount, None, None, None, None),
                         ])
+                    entries.append(txn)
 
-                elif rtype == 'Interest':
-                    assert fees.number == ZERO
+                elif row.transaction_type == 'Interest':
+                    dividend = amount.Amount(D(str(row.value)), self.currency)
+                    f_amount = amount.Amount(D(str(row.amount)), self.currency)
+                    withholding_tax = amount.Amount(D(str(row.withholding_tax)), self.currency)
                     txn = data.Transaction(
-                        meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                            data.Posting(self.account_cash, units, None, None, None,
-                                         None),
-                            data.Posting(self.account_external, -other, None, None, None,
-                                         None),
+                        meta=meta,
+                        date=row.date,
+                        flag=self.FLAG,
+                        payee=None,
+                        narration=desc,
+                        tags=data.EMPTY_SET,
+                        links=data.EMPTY_SET,
+                        postings=[
+                            data.Posting(self.account_interest, -dividend, None, None, None, None),
+                            data.Posting(account_withholdingtax, withholding_tax, None, None, None, None),
+                            data.Posting(self.account_cash, f_amount, None, None, None, None),
                         ])
+                    entries.append(txn)
 
-                elif rtype in ('BUY', 'SELL'):
+                elif row.transaction_type in ('BUY', 'SELL'):
+                    total_amount = D(str(row.quantity)) * D(str(row.price))
+                    account_inst = account.join(self.account_root, row.symbol)
+                    units_inst = amount.Amount(D(str(row.quantity)), row.symbol)
 
-                    account_inst = account.join(self.account_root, instrument)
-                    units_inst = amount.Amount(D(row['Quantity']), instrument)
-                    
+                    if row.transaction_type == 'BUY':
+                        cost = position.Cost(D(str(row.price)), self.currency, None, None)
+                        b_value = amount.Amount(total_amount + D(str(row.commission)), self.currency)
 
-                    if rtype == 'BUY':
-                        cost = position.Cost(rate, self.currency, None, None)
                         txn = data.Transaction(
-                            meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                                data.Posting(self.account_cash, -units, None, None, None,
-                                             None),
-                                data.Posting(self.account_fees, fees, None, None, None,
-                                             None),
-                                data.Posting(account_inst, units_inst, cost, None, None,
-                                             None),
+                            meta=meta,
+                            date=row.date,
+                            flag=self.FLAG,
+                            payee=None,
+                            narration=desc,
+                            tags=data.EMPTY_SET,
+                            links=data.EMPTY_SET,
+                            postings=[
+                                data.Posting(self.account_cash, -b_value, None, None, None, None),
+                                data.Posting(self.account_fees, fees, None, None, None, None),
+                                data.Posting(account_inst, units_inst, cost, None, None, None),
                             ])
 
-                    elif rtype == 'SELL':
-                        # Extract the lot. In practice this information not be there
-                        # and you will have to identify the lots manually by editing
-                        # the resulting output. You can leave the cost.number slot
-                        # set to None if you like.
-                        cost_number = None
-                        cost = position.Cost(cost_number, self.currency, None, None)
-                        price = amount.Amount(rate, self.currency)
-                        account_gains = self.account_gains.format(instrument)
+                    elif row.transaction_type == 'SELL':
+                        s_value = amount.Amount(total_amount - D(str(row.commission)), self.currency)
+                        price = amount.Amount(D(str(row.price)), self.currency)
+                        account_gains = self.account_gains.format(row.symbol)
+
                         txn = data.Transaction(
-                            meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                                data.Posting(self.account_cash, units, None, None, None,
-                                             None),
-                                data.Posting(self.account_fees, fees, None, None, None,
-                                             None),
-                                data.Posting(account_inst, -units_inst, cost, price, None,
-                                             None),
-                                data.Posting(account_gains, None, None, None, None,
-                                             None),
+                            meta=meta,
+                            date=row.date,
+                            flag=self.FLAG,
+                            payee=None,
+                            narration=desc,
+                            tags=data.EMPTY_SET,
+                            links=data.EMPTY_SET,
+                            postings=[
+                                data.Posting(self.account_cash, s_value, None, None, None, None),
+                                data.Posting(self.account_fees, fees, None, None, None, None),
+                                data.Posting(account_inst, -units_inst, None, price, None, None),
+                                data.Posting(account_gains, None, None, None, None, None),
                             ])
 
-                else:
-                    logging.error("Unknown row type: %s; skipping", rtype)
-                    continue
+                    entries.append(txn)
 
-                entries.append(txn)
+            except (AttributeError, ValueError) as e:
+                print(f"Error processing row {index}: {e}")
+                continue
 
-        # Insert a final balance check.
-       
         return entries
+
+    def account(self, filepath):
+        """Return account associated with this importer."""
+        return self.account_root
