@@ -26,12 +26,14 @@ symbol,isin,trade_date,exchange,segment,series,trade_type,auction,quantity,price
 Just ensure that the csv file is named as zerodhaNNNNNNNN.csv
 format. For example, zerodha20232024.csv is a valid filename.
 
-Refer to the ![folder
+In beangulp, the importers are called by an import_XXX.py which has
+replaced the config.py files used earlier.
+The actual ledger can be like my.beancount.
+
+
+![folder
 structure](https://github.com/prabusw/beancount-importer-zerodha/blob/master/folderstructure.png)
 
-In beangulp, the importers are called by an import_XXX.py which has
-replaced the config.py files used earlier. The actual ledgers appear
-like my.beancount.
 
 ## Importer for Banks
 
