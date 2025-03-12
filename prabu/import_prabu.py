@@ -17,11 +17,16 @@ from importers.zerodha import zerodha
 from importers.kgi import kgi
 from importers.kvb import kvb
 from beancount.core import data
-
+# from hoostus.beangulp.hooks import predict_posting
+from smart_importer import apply_hooks, PredictPayees, PredictPostings
 import beangulp
 
+smart_icici = icici.IciciBankImporter("Assets:IN:ICICIBank:Prabu","XXXXXXXXXXX")
+apply_hooks(smart_icici, [PredictPostings(), PredictPayees()])
+
 importers = [
-    icici.IciciBankImporter("Assets:IN:ICICIBank:Prabu","XXXXXXXXXXX"),
+    smart_icici,
+    # icici.IciciBankImporter("Assets:IN:ICICIBank:Prabu","XXXXXXXXXXX"),
     sbi.SBIImporter("Assets:IN:SBI:Savings","XXXXXXXXXXX"),
     kvb.KVBImporter("Assets:IN:KVB:Savings","XXXXXXXXXXXXXXX"),
     iob.IOBImporter("Assets:IN:IOB:Savings:Prabu","3286"),
@@ -91,6 +96,7 @@ def process_extracted_entries(extracted_entries_list, ledger_entries):
     return [(filename, clean_up_descriptions(entries), account, importer)
             for filename, entries, account, importer in extracted_entries_list]
 
+# hooks = [predict_posting.simple_hook]
 hooks = [process_extracted_entries,]
 if __name__ == '__main__':
     ingest = beangulp.Ingest(importers, hooks)
