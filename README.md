@@ -23,6 +23,35 @@ prabu.beancount.
 ![folder
 structure](https://github.com/prabusw/beancount-importer-zerodha/blob/master/folderstructure.png)
 
+├── importers
+│   ├── aniruth
+│   │   └── purse.py
+│   ├── etrade
+│   │   └── etrade.py
+│   ├── icici
+│   │   └── icici.py
+│   ├── iob
+│   │   └── iob.py
+│   ├── iocbc
+│   │   └── iocbc.py
+│   ├── kgi
+│   │   └── kgi.py
+│   ├── kvb
+│   │   └── kvb.py
+│   ├── rksv
+│   │   └── rksv.py
+│   ├── sbi
+│   │   └── sbi.py
+│   └── zerodha
+│       ├── zerodha.py
+├── prabu
+│   ├── import_prabu.py
+│   ├── import_rates.py
+│   └── prabu.beancount
+├── requirements.txt
+└── tools
+    └── tsv2csv.sh
+
 ## Using the Importers
 
 The commands to use to identify, extract and archive are given below:
