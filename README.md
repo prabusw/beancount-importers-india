@@ -22,7 +22,7 @@ prabu.beancount.
 
 ![folder
 structure](https://github.com/prabusw/beancount-importer-zerodha/blob/master/folderstructure.png)
-
+```
 ├── importers
 │   ├── aniruth
 │   │   └── purse.py
@@ -51,7 +51,7 @@ structure](https://github.com/prabusw/beancount-importer-zerodha/blob/master/fol
 ├── requirements.txt
 └── tools
     └── tsv2csv.sh
-
+```
 ## Using the Importers
 
 The commands to use to identify, extract and archive are given below:
