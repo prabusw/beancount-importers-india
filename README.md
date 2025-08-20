@@ -22,6 +22,7 @@ prabu.beancount.
 
 ![folder
 structure](https://github.com/prabusw/beancount-importer-zerodha/blob/master/folderstructure.png)
+
 ```
 ├── importers
 │   ├── aniruth
