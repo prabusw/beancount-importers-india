@@ -1,11 +1,9 @@
-"""Importer for US Stock broker Etrade. This can be used to import transactions from transactions log provided by the broker.
-This is entirely based on the Example importer utrade_csv.py written for example broker UTrade by Beancount author Martin Blais.
-v0.2 converted to beangulp format
-v0.3 issues related to unknown transaction type has been addressed with a FixMe option
+"""Importer for US Stock broker Etrade to import transactions.
+This is based on the Example importer utrade_csv.py by Martin Blais.
 """
 __copyright__ = "Copyright (C) 2020  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.3"
+__Version__ = "0.4"
 
 import os
 import re
@@ -16,7 +14,7 @@ class ETradeImporter(Importer):
     """An importer for ETrade CSV files."""
 
     # Define columns based on the CSV structure
-    # skiplines = 3
+    skiplines = 3
     date = Date("TransactionDate", frmt="%m/%d/%y")
     rtype = Column("TransactionType")
     security_type = Column("SecurityType")
@@ -73,30 +71,40 @@ class ETradeImporter(Importer):
 
         # Handle different transaction types
 
-        if row.rtype in ("Dividend","Qualified Dividend"):
+        if row.amount == 0:
+            postings = [
+                data.Posting(self.account_cash, None,None, None, None, None),
+                data.Posting("Expenses:FixMe", None,None, None, None, None),
+            ]
+
+        elif row.rtype in ("Dividend","Qualified Dividend") and row.amount != 0:
             account_dividends = self.account_dividends.format(row.symbol)
             postings = [
                 data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
-                data.Posting(account_dividends, -amount.Amount(row.amount, self.currency), None, None, None, None),
+                data.Posting(account_dividends, None, None, None, None, None),
             ]
 
-        elif row.rtype in ("Tax","Tax Withholding","MISC"):
+        elif row.rtype in ("Tax","Tax Withholding"):
             account_withholdingtax = self.account_withholdingtax.format(row.symbol)
             postings = [
                 data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
-                data.Posting(account_withholdingtax, -amount.Amount(row.amount, self.currency), None, None, None, None),
+                data.Posting(account_withholdingtax, None, None, None, None, None),
             ]
 
         elif row.rtype in ("Interest","Interest Income"):
             postings = [
                 data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
-                data.Posting(self.account_external, -amount.Amount(row.amount, self.currency), None, None, None, None),
+                data.Posting(self.account_external, None, None, None, None, None),
             ]
 
-        elif row.rtype ==  "Fee":
+        elif row.rtype in ("Fee","MISC"):
             postings = [
                 data.Posting(self.account_cash, -amount.Amount(row.amount, self.currency), None, None, None, None),
-                data.Posting(self.account_fees, amount.Amount(row.amount, self.currency), None, None, None, None),
+                data.Posting(self.account_fees, None, None, None, None, None),
+            ]
+        elif row.rtype in  ("Wire","Wire out","Wire In"):
+            postings = [
+                data.Posting(self.account_cash, -amount.Amount(row.amount, self.currency), None, None, None, None),
             ]
 
         elif row.rtype in ("Bought", "Sold"):
@@ -105,7 +113,7 @@ class ETradeImporter(Importer):
             cost = position.Cost(row.price, self.currency, None, None)
             if row.rtype == "Bought":
                 postings = [
-                    data.Posting(self.account_cash, -amount.Amount(row.amount, self.currency), None, None, None, None),
+                    data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
                     data.Posting(self.account_fees, amount.Amount(row.commission, self.currency), None, None, None, None),
                     data.Posting(account_inst, units_inst, cost, None, None, None),
                 ]
@@ -119,7 +127,7 @@ class ETradeImporter(Importer):
             print(f"Unknown transaction type {row.rtype} marked with FixMe appeared in {row}")
             postings = [
                 data.Posting(self.account_cash, -amount.Amount(row.amount, self.currency), None, None, None, None),
-                data.Posting("Expenses:FixMe", amount.Amount(row.amount, self.currency), None, None, None, None),
+                data.Posting("Expenses:FixMe", None, None, None, None, None),
             ]
             # return None
 

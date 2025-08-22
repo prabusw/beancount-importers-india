@@ -1,13 +1,9 @@
 """Importer for KVB, India.
-This script is heavily based on the script importers-chase.py  by Matt Terwilliger.
-Original script can be found here https://gist.github.com/mterwill/7fdcc573dc1aa158648aacd4e33786e8
-v0.1 made changes to automatically recognize credit and Debit transactions by changing sign based on importers-schwab.py script
-v0.2 in line 34, the argument existing_entries was added to def extract .Originally it was  def extract(self, f):
-v0.3 converted the importer to beangulp format based on SBI Importer
+This script is based on the script importers-chase.py by Matt Terwilliger.
 """
 __copyright__ = "Copyright (C) 2020-2025  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.3"
+__Version__ = "0.4"
 
 import re
 from beangulp.importers.csvbase import Importer, Date, Amount, Column
@@ -21,7 +17,7 @@ class CleanAmount(Amount):
 
 class KVBImporter(Importer):
     """An importer for KVB files downloaded in csv format from internet banking."""
-    skiplines = 12  # Skip the first 12 lines for savings before reading the header
+    skiplines = 13  # Skip the first 12 lines for savings before reading the header
     date = Date("Value Date", frmt="%d-%m-%Y")
     narration = Column("Description")
     withdrawal = CleanAmount("Debit")
