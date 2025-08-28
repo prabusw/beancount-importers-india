@@ -1,142 +1,157 @@
-"""Importer for Thailand Stock broker KGI. The trade log has to be manually created in csv format.
-This is entirely based on the Example importer utrade_csv.py written for example broker UTrade by Beancount author Martin Blais.
-This version 0.1 of iocbc_cash is based on kgi.py V0.2
+"""Beancount importer for Singapore stock broker iOCBC based on beangulp to import trades from transaction history of iocbc website.
+Based on utrade_csv.py by Martin Blais.
 """
 __copyright__ = "Copyright (C) 2020  Prabu Anand K"
 __license__ = "GNU GPLv3"
-__Version__ = "0.1"
+__Version__ = "0.2"
 
-import csv
-import datetime
+import os
 import re
-import logging
-from os import path
+from beancount.core import data, amount, account, position
+from beangulp.importers.csvbase import Importer, Date, Amount, Column
 
-from dateutil.parser import parse
+class CleanAmount(Amount):
+    """Amount column that handles empty values and commas gracefully."""
+    def parse(self, value):
+        if not value or str(value).strip() == '':
+            return 0
+        # Handle comma-separated numbers like "3,500" or "107,869.00"
+        cleaned = str(value).replace(',', '')
+        return super().parse(cleaned)
 
-from beancount.core.number import D
-from beancount.core.number import ZERO
-from beancount.core import data
-from beancount.core import account
-from beancount.core import amount
-from beancount.core import position
-from beancount.ingest import importer
+class IocbcImporter(Importer):
+    """An importer for IOCBC transaction history file"""
 
+    # Define columns based on the CSV structure
+    skiplines = 1  # Skip the "Generated on..." line and header row
+    date = Date("Date", frmt="%d/%m/%Y")
+    account_col = Column("Account")
+    symbol = Column("Code")
+    name = Column("Name")
+    action = Column("Action")
+    quantity = CleanAmount("Quantity")
+    price = CleanAmount("Price")
+    amount = CleanAmount("Nett amount")  # csvbase expects 'amount' attribute
+    narration = Column("Contract/Reference")
 
-class IocbcImporter(importer.ImporterProtocol):
-    """An importer for iocbcCash CSV files."""
-
-    def __init__(self, currency,
-                 account_root,
-                 account_cash,
-                 account_dividends,
-                 account_gains,
-                 account_fees,
-                 account_interest,
-                 account_external):
-        self.currency = currency
+    def __init__(self, currency, account_root, account_cash, account_fees):
+        super().__init__(account_root, currency)
         self.account_root = account_root
         self.account_cash = account_cash
-        self.account_dividends = account_dividends
-        self.account_gains = account_gains
         self.account_fees = account_fees
-        self.account_interest = account_interest
-        self.account_external = account_external
-              
 
-    def identify(self, file):
-        # Match if the filename is as downloaded and the header has the unique
-        # fields combination we're looking for.
-        return (re.match(r"iocbc_d_cpf\d\d\d\d\d\d\d\d\.csv", path.basename(file.name)) and
-                re.match("TransactionDate,TransactionType,Stock Name,", file.head()))
+    def identify(self, filepath):
+        """Identify if this is an IOCBC CSV file."""
+        if not filepath.endswith('.csv'):
+            return False
+        filename = os.path.basename(filepath)
+        match = re.match(r"iocbc\d{6,8}\.csv", filename)
+        return match is not None
 
-    def extract(self, file):
-        # Open the CSV file and create directives.
-        entries = []
-        index = 0
-        with open(file.name) as infile:
-            for index, row in enumerate(csv.DictReader(infile)):
-                meta = data.new_metadata(file.name, index)
-                date = parse(row['TransactionDate']).date()
-                rtype = row['TransactionType']
-                #link = "ut{0[SecurityType]}".format(row)
-                #desc = "({0[TransactionType]})({0[Symbol]})({0[Stock Name]})Contract No:{0[Contract]}".format(row)
-                desc = "({0[TransactionType]}) for ({0[Stock Name]})".format(row) #To be used for Dividends/Interest
-                units = amount.Amount(D(row['Amount']), self.currency)
-                #dividend = amount.Amount(D(row['Dividend']), self.currency)
-                fees = amount.Amount(D(row['Commission']), self.currency)
-                #other = amount.add(units, fees)
-                instrument = row['Symbol']
-                stockname = row ['Stock Name']
-                #rate = D(row['Price'])  # Not needed for Dividends/Interest              
-                
+    def account(self, filepath):
+        """Return account associated with this importer."""
+        return self.account_root
 
-                if rtype == 'Dividend':
-                    assert fees.number == ZERO
+    def read(self, filepath):
+        """Override the read method to handle multi-line CSV records."""
+        rows = list(super().read(filepath))
 
-                    account_dividends = self.account_dividends.format(stockname)
-                    
-                    txn = data.Transaction(
-                        meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                            data.Posting(account_dividends, -units, None, None, None, None),
-                            data.Posting(self.account_external, None, None, None, None, None),
-                        ])
+        # Process rows in pairs (transaction + metadata)
+        for i in range(0, len(rows), 2):
+            if i + 1 >= len(rows):
+                break  # Skip if we don't have a complete pair
 
-                elif rtype == 'Interest':
-                    assert fees.number == ZERO
-                    txn = data.Transaction(
-                        meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                            data.Posting(self.account_interest, -units, None, None, None, None),#Income from broker
-                            #data.Posting(self.account_cash, None, None, None, None, None),# Interest to broker
-                            data.Posting(self.account_external, None, None, None, None, None),# Interest to bank
-                            
-                        ])
+            main_row = rows[i]
+            meta_row = rows[i + 1]
 
-                elif rtype in ('Bought', 'Sold'):
+            # Skip if main row doesn't have essential data
+            if len(main_row) < 8 or not main_row[0] or not main_row[4]:
+                continue
 
-                    account_inst = account.join(self.account_root, stockname)
-                    units_inst = amount.Amount(D(row['Quantity']), instrument)
-                    
+            # Skip if not a buy/sell transaction
+            if main_row[4].strip().lower() not in ['buy', 'sell']:
+                continue
 
-                    if rtype == 'Bought':
-                        cost = position.Cost(rate, self.currency, None, None)
-                        txn = data.Transaction(
-                            meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                                data.Posting(self.account_cash, -units, None, None, None,
-                                             None),
-                                data.Posting(self.account_fees, fees, None, None, None,
-                                             None),
-                                data.Posting(account_inst, units_inst, cost, None, None,
-                                             None),
-                            ])
+            # Store metadata as attributes on the main row object for later use
+            # We'll access these in finalize method
+            main_row._meta_account = meta_row[1] if len(meta_row) > 1 else ''
+            main_row._meta_exchange = meta_row[2] if len(meta_row) > 2 else ''
+            main_row._meta_security_type = meta_row[3] if len(meta_row) > 3 else ''
+            main_row._meta_currency = meta_row[6] if len(meta_row) > 6 else ''
 
-                    elif rtype == 'Sold':
-                        # Extract the lot. In practice this information not be there
-                        # and you will have to identify the lots manually by editing
-                        # the resulting output. You can leave the cost.number slot
-                        # set to None if you like.
-                        cost_number = None
-                        cost = position.Cost(cost_number, self.currency, None, None)
-                        price = amount.Amount(rate, self.currency)
-                        account_gains = self.account_gains.format(stockname)
-                        txn = data.Transaction(
-                            meta, date, self.FLAG, None, desc, data.EMPTY_SET, data.EMPTY_SET, [
-                                data.Posting(self.account_cash, units, None, None, None,
-                                             None),
-                                data.Posting(self.account_fees, fees, None, None, None,
-                                             None),
-                                data.Posting(account_inst, -units_inst, cost, price, None,
-                                             None),
-                                data.Posting(account_gains, None, None, None, None,
-                                             None),
-                            ])
+            yield main_row
 
-                else:
-                    logging.error("Unknown row type: %s; skipping", rtype)
-                    continue
+    def finalize(self, txn, row):
+        """Customize transaction creation for buy/sell transactions."""
 
-                entries.append(txn)
+        # Extract data from row - now these are already parsed by CleanAmount
+        action = row.action.strip() if row.action else ""
+        symbol = row.symbol.strip() if row.symbol else ""
+        company_name = row.name.strip() if row.name else ""
+        quantity_val = row.quantity
+        price_val = row.price
+        nett_amount_val = row.amount
+        f_account = row.account_col
 
-        # Insert a final balance check.
-       
-        return entries
+        # Extract additional metadata that we stored in the read method
+        account_num = getattr(row, '_meta_account', '')
+        exchange = getattr(row, '_meta_exchange', '')
+        security_type = getattr(row, '_meta_security_type', '')
+        transaction_currency = getattr(row, '_meta_currency', '') or self.currency
+
+        if not action or not symbol:
+            print(f"Missing essential data in row: {row}")
+            return None
+
+        desc = f"({row.action}) {security_type} {symbol} {company_name} at {exchange} for {f_account} with contract {row.narration} "  # Combine type and description
+        txn = txn._replace(narration=desc)
+
+        # Create account for the instrument
+        t_account_inst = account.join(self.account_root, f_account.upper())
+        account_inst = account.join(t_account_inst, symbol)
+        # account_inst = account.join(self.account_root, symbol)
+
+        # Create amounts - use transaction currency if different from base currency
+        units_inst = amount.Amount(quantity_val, symbol)
+        cost = position.Cost(price_val, transaction_currency, None, None)
+
+        # Calculate fees (difference between quantity*price and nett amount)
+        gross_amount = quantity_val * price_val
+        fee_amount = abs(gross_amount - abs(nett_amount_val))
+
+        postings = []
+
+        if action.lower() == "buy":
+            # For buy transactions: cash decreases, holdings increase
+            postings = [
+                data.Posting(self.account_cash, amount.Amount(-nett_amount_val, transaction_currency), None, None, None, None),
+                data.Posting(account_inst, units_inst, cost, None, None, None),
+            ]
+            # Only add fees if they are significant
+            if fee_amount > 0.01:
+                postings.append(
+                    data.Posting(self.account_fees, amount.Amount(fee_amount, transaction_currency), None, None, None, None)
+                )
+
+        elif action.lower() == "sell":
+            # For sell transactions: cash increases, holdings decrease
+            postings = [
+                data.Posting(self.account_cash, amount.Amount(nett_amount_val, transaction_currency), None, None, None, None),
+                data.Posting(account_inst, -units_inst, cost, None, None, None),
+            ]
+            # Only add fees if they are significant
+            if fee_amount > 0.01:
+                postings.append(
+                    data.Posting(self.account_fees, amount.Amount(fee_amount, transaction_currency), None, None, None, None)
+                )
+
+        else:
+            print(f"Unknown action type: {action} marked with FixMe appeared in {row}")
+            postings = [
+                data.Posting(self.account_cash, None, None, None, None, None),
+                data.Posting("Expenses:FixMe", None, None, None, None, None),
+            ]
+
+        # Replace transaction postings
+        txn = txn._replace(postings=postings)
+        return txn
