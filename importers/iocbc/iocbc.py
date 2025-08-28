@@ -34,12 +34,14 @@ class IocbcImporter(Importer):
     amount = CleanAmount("Nett amount")  # csvbase expects 'amount' attribute
     narration = Column("Contract/Reference")
 
-    def __init__(self, currency, account_root, iocbc_account, srs_account, cpfis_account, account_fees):
+    def __init__(self, currency, account_root, account_cash, srs_account_gains, cpfis_account_gains, cdp_account_gains, account_fees):
         super().__init__(account_root, currency)
         self.account_root = account_root
-        self.iocbc_account = iocbc_account
-        self.srs_account = srs_account
-        self.cpfis_account = cpfis_account
+        self.account_cash = account_cash
+        # self.account_dividends = account_dividends
+        self.srs_account_gains = srs_account_gains
+        self.cpfis_account_gains = cpfis_account_gains
+        self.cdp_account_gains = cdp_account_gains
         self.account_fees = account_fees
 
     def identify(self, filepath):
@@ -105,62 +107,69 @@ class IocbcImporter(Importer):
             print(f"Missing essential data in row: {row}")
             return None
 
-        desc = f"({row.action}) {security_type} {symbol} {company_name} at {exchange} for {f_account} with contract {row.narration} "  # Combine type and description
+        desc = f"({row.action}) @{exchange} {security_type} {symbol} {company_name} Contract No:{row.narration}"  # Combine type and description
         txn = txn._replace(narration=desc)
-
-        # Create account for the instrument
-        # t_account_inst = account.join(self.account_root, f_account.upper())
-        # account_inst = account.join(t_account_inst, symbol)
-        # account_inst = account.join(self.account_root, symbol)
 
         # Create amounts - use transaction currency if different from base currency
         units_inst = amount.Amount(quantity_val, symbol)
-        cost = position.Cost(price_val, transaction_currency, None, None)
+        # cost = position.Cost(row.price, transaction_currency, None, None)
+        cost = position.Cost(row.price, self.currency, None, None)
 
         # Calculate fees (difference between quantity*price and nett amount)
         gross_amount = quantity_val * price_val
         fee_amount = abs(gross_amount - abs(nett_amount_val))
 
+        # account_withholdingtax = self.account_withholdingtax.format(row.symbol)
+
         # Create accounts for the instrument and cash based on Account column
 
         if f_account == "SRS":
             # t_account_inst = self.srs_account
-            account_inst = account.join(self.srs_account, symbol)
-            txn_account_cash = account.join(self.srs_account,"Cash")
+            srs_account_root = account.join(self.account_root,f_account)
+            account_inst = account.join(srs_account_root, symbol)
+            txn_account_cash = account.join(srs_account_root,"Cash")
+            # srs_account_gains = account.join(self.account_gains,f_account)
+            # txn_account_gains = srs_account_gains.format(row.symbol)
+            txn_account_gains = self.srs_account_gains.format(row.symbol)
 
         elif f_account == "CPF":
-            account_inst = account.join(self.cpfis_account, symbol)
-            txn_account_cash = account.join(self.cpfis_account,"Cash")
+            cpfis_account_root = account.join(self.account_root,"CPFIS")
+            account_inst = account.join(cpfis_account_root, symbol)
+            txn_account_cash = account.join(cpfis_account_root,"Cash")
+            # cpfis_account_gains = account.join(self.account_gains,"CPFIS")
+            txn_account_gains = self.cpfis_account_gains.format(row.symbol)
         else:
             # txn_account_cash = self.iocbc_account_cash
-            txn_account_cash = account.join(self.iocbc_account,"Cash")
-            account_inst = account.join(self.account_root, symbol)
+            iocbc_account_root = account.join(self.account_root,f_account)
+            txn_account_cash = self.account_cash
+            account_inst = account.join(iocbc_account_root, symbol)
+            # iocbc_account_gains = account.join(self.account_gains,f_account)
+            txn_account_gains = self.cdp_account_gains.format(row.symbol)
+
 
         postings = []
 
+        trade_price = amount.Amount(row.price, self.currency)
+
         if action.lower() == "buy":
             # For buy transactions: cash decreases, holdings increase
+            # Cost object for buys: this locks in cost basis
+            cost = position.Cost(trade_price.number, self.currency, None, None)
             postings = [
                 data.Posting(txn_account_cash, amount.Amount(-nett_amount_val, transaction_currency), None, None, None, None),
+                data.Posting(self.account_fees, amount.Amount(fee_amount, transaction_currency), None, None, None, None),
                 data.Posting(account_inst, units_inst, cost, None, None, None),
             ]
-            # Only add fees if they are significant
-            if fee_amount > 0.01:
-                postings.append(
-                    data.Posting(self.account_fees, amount.Amount(fee_amount, transaction_currency), None, None, None, None)
-                )
 
         elif action.lower() == "sell":
             # For sell transactions: cash increases, holdings decrease
+            cost = position.Cost(None, None, None, None)
             postings = [
                 data.Posting(txn_account_cash, amount.Amount(nett_amount_val, transaction_currency), None, None, None, None),
-                data.Posting(account_inst, -units_inst, cost, None, None, None),
+                data.Posting(self.account_fees, amount.Amount(fee_amount, transaction_currency), None, None, None, None),
+                data.Posting(account_inst, -units_inst, cost, trade_price, None, None),
+                data.Posting(txn_account_gains, None, None, None, None, None),
             ]
-            # Only add fees if they are significant
-            if fee_amount > 0.01:
-                postings.append(
-                    data.Posting(self.account_fees, amount.Amount(fee_amount, transaction_currency), None, None, None, None)
-                )
 
         else:
             print(f"Unknown action type: {action} marked with FixMe appeared in {row}")

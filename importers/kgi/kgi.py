@@ -109,6 +109,7 @@ class KGIImporter(Importer):
             fees = amount.Amount(row.commission, self.currency)
             account_inst = account.join(self.account_root, row.symbol)
             units_inst = amount.Amount(row.quantity, row.symbol)
+            # Cost object for buys: this locks in cost basis
             cost = position.Cost(row.price, self.currency, None, None)
             total_cost = amount.Amount(row.quantity * row.price + row.commission, self.currency)
 
@@ -124,12 +125,13 @@ class KGIImporter(Importer):
             units_inst = amount.Amount(row.quantity, row.symbol)
             net_proceeds = amount.Amount(row.quantity * row.price - row.commission, self.currency)
             price_amount = amount.Amount(row.price, self.currency)
+            cost = position.Cost(None, None, None, None)
             account_gains = self.account_gains.format(row.symbol)
 
             postings = [
                 data.Posting(self.account_cash, net_proceeds, None, None, None, None),
                 data.Posting(self.account_fees, fees, None, None, None, None),
-                data.Posting(account_inst, -units_inst, None, price_amount, None, None),
+                data.Posting(account_inst, -units_inst, cost, price_amount, None, None),
                 data.Posting(account_gains, None, None, None, None, None),
             ]
 

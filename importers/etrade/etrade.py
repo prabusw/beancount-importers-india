@@ -8,14 +8,16 @@ __Version__ = "0.4"
 import os
 import re
 from beancount.core import data, amount, account, position
+from beancount.core.number import D
 from beangulp.importers.csvbase import Importer, Date, Amount, Column
 
 class ETradeImporter(Importer):
     """An importer for ETrade CSV files."""
 
     # Define columns based on the CSV structure
-    skiplines = 3
-    date = Date("TransactionDate", frmt="%m/%d/%y")
+    # skiplines = 3
+    # date = Date("TransactionDate", frmt="%m/%d/%y")
+    date = Date("TransactionDate", frmt="%Y-%m-%d")
     rtype = Column("TransactionType")
     security_type = Column("SecurityType")
     narration = Column("Description", default="None given")
@@ -110,18 +112,24 @@ class ETradeImporter(Importer):
         elif row.rtype in ("Bought", "Sold"):
             account_inst = account.join(self.account_root, row.symbol)
             units_inst = amount.Amount(row.quantity, row.symbol)
-            cost = position.Cost(row.price, self.currency, None, None)
+            # Cost object for buys: this locks in cost basis
+            trade_price = amount.Amount(row.price, self.currency)
+            account_gains = self.account_gains.format(row.symbol)
+
             if row.rtype == "Bought":
+                cost = position.Cost(trade_price.number, self.currency, None, None)
                 postings = [
                     data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
                     data.Posting(self.account_fees, amount.Amount(row.commission, self.currency), None, None, None, None),
                     data.Posting(account_inst, units_inst, cost, None, None, None),
                 ]
             elif row.rtype == "Sold":
+                cost = position.Cost(None, None, None, None)
                 postings = [
                     data.Posting(self.account_cash, amount.Amount(row.amount, self.currency), None, None, None, None),
                     data.Posting(self.account_fees, amount.Amount(row.commission, self.currency), None, None, None, None),
-                    data.Posting(account_inst, -units_inst, cost, None, None, None),
+                    data.Posting(account_inst, -units_inst, cost, trade_price, None, None),
+                    data.Posting(account_gains, None, None, None, None, None),
                 ]
         else:
             print(f"Unknown transaction type {row.rtype} marked with FixMe appeared in {row}")
