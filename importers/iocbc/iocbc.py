@@ -34,10 +34,12 @@ class IocbcImporter(Importer):
     amount = CleanAmount("Nett amount")  # csvbase expects 'amount' attribute
     narration = Column("Contract/Reference")
 
-    def __init__(self, currency, account_root, account_cash, account_fees):
+    def __init__(self, currency, account_root, iocbc_account, srs_account, cpfis_account, account_fees):
         super().__init__(account_root, currency)
         self.account_root = account_root
-        self.account_cash = account_cash
+        self.iocbc_account = iocbc_account
+        self.srs_account = srs_account
+        self.cpfis_account = cpfis_account
         self.account_fees = account_fees
 
     def identify(self, filepath):
@@ -107,8 +109,8 @@ class IocbcImporter(Importer):
         txn = txn._replace(narration=desc)
 
         # Create account for the instrument
-        t_account_inst = account.join(self.account_root, f_account.upper())
-        account_inst = account.join(t_account_inst, symbol)
+        # t_account_inst = account.join(self.account_root, f_account.upper())
+        # account_inst = account.join(t_account_inst, symbol)
         # account_inst = account.join(self.account_root, symbol)
 
         # Create amounts - use transaction currency if different from base currency
@@ -119,12 +121,27 @@ class IocbcImporter(Importer):
         gross_amount = quantity_val * price_val
         fee_amount = abs(gross_amount - abs(nett_amount_val))
 
+        # Create accounts for the instrument and cash based on Account column
+
+        if f_account == "SRS":
+            # t_account_inst = self.srs_account
+            account_inst = account.join(self.srs_account, symbol)
+            txn_account_cash = account.join(self.srs_account,"Cash")
+
+        elif f_account == "CPF":
+            account_inst = account.join(self.cpfis_account, symbol)
+            txn_account_cash = account.join(self.cpfis_account,"Cash")
+        else:
+            # txn_account_cash = self.iocbc_account_cash
+            txn_account_cash = account.join(self.iocbc_account,"Cash")
+            account_inst = account.join(self.account_root, symbol)
+
         postings = []
 
         if action.lower() == "buy":
             # For buy transactions: cash decreases, holdings increase
             postings = [
-                data.Posting(self.account_cash, amount.Amount(-nett_amount_val, transaction_currency), None, None, None, None),
+                data.Posting(txn_account_cash, amount.Amount(-nett_amount_val, transaction_currency), None, None, None, None),
                 data.Posting(account_inst, units_inst, cost, None, None, None),
             ]
             # Only add fees if they are significant
@@ -136,7 +153,7 @@ class IocbcImporter(Importer):
         elif action.lower() == "sell":
             # For sell transactions: cash increases, holdings decrease
             postings = [
-                data.Posting(self.account_cash, amount.Amount(nett_amount_val, transaction_currency), None, None, None, None),
+                data.Posting(txn_account_cash, amount.Amount(nett_amount_val, transaction_currency), None, None, None, None),
                 data.Posting(account_inst, -units_inst, cost, None, None, None),
             ]
             # Only add fees if they are significant
