@@ -8,7 +8,6 @@ __Version__ = "0.4"
 import os
 import re
 from beancount.core import data, amount, account, position
-from beancount.core.number import D
 from beangulp.importers.csvbase import Importer, Date, Amount, Column
 
 class ETradeImporter(Importer):
