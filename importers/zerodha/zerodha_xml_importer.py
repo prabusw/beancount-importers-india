@@ -28,7 +28,7 @@ class ZerodhaXMLImporter(Importer):
 
     def __init__(self, currency: str, account_root: str, account_cash: str,
                  account_dividends: str, account_gains: str, account_fees: str,
-                 account_external: str, demat_charge_per_sell: Optional[Decimal] = None):
+                 account_external: str):
         self.currency = currency
         self.account_root = account_root
         self.account_cash = account_cash
@@ -36,7 +36,7 @@ class ZerodhaXMLImporter(Importer):
         self.account_gains = account_gains
         self.account_fees = account_fees
         self.account_external = account_external
-        self.demat_charge_per_sell = demat_charge_per_sell
+        self.demat_charge_per_sell = D("13.50")
 
     def identify(self, filepath: str) -> bool:
         if not filepath.endswith('.xml'):
@@ -326,7 +326,7 @@ class ZerodhaXMLImporter(Importer):
                     postings.append(
                         data.Posting(demat_account, demat_amount, None, None, None, None)
                     )
-                print(f"DEBUG: created Sell txn for {symbol}, qty={total_quantity}, proceeds={net_proceeds}")
+                # print(f"DEBUG: created Sell txn for {symbol}, qty={total_quantity}, proceeds={net_proceeds}")
             # Create and yield transaction
             txn = data.Transaction(
                 meta=meta,
