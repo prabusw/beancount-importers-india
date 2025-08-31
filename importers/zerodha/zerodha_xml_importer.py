@@ -1,26 +1,67 @@
 """Beangulp based beancount importer for Indian Stock broker Zerodha
 XML contract notes. This imports transactions from contract notes XML files
 provided by the broker.
-
-This importer processes XML contract notes that contain detailed trading information
-including trades, charges, taxes, and totals. Unlike CSV importers, this processes
-structured XML data with nested elements.
 """
 
-__copyright__ = "Copyright (C) 2025  Prabu Anand K"
-__license__ = "GNU GPLv3"
-__version__ = "0.1"
-
 import os
-import re
 import xml.etree.ElementTree as ET
 from decimal import Decimal
+from enum import Enum
 from datetime import datetime
 from typing import Optional, Dict, List
-
 from beancount.core import data, amount, account, position
 from beancount.core.number import D
 from beangulp import Importer
+
+
+class TradeType(Enum):
+    EQUITY_DELIVERY = "equity_delivery"
+    EQUITY_INTRADAY = "equity_intraday"
+    FO_FUTURES = "fo_futures"
+    FO_OPTIONS = "fo_options"
+
+
+class ChargePolicy:
+    """Policy configuration for different trading charges based on instrument type."""
+
+    POLICY = {
+        TradeType.EQUITY_DELIVERY: {
+            'brokerage': {'rate': D('0'), 'flat': D('0'), 'cap': None},
+            'stt_buy': D('0.001'),
+            'stt_sell': D('0.001'),
+            'transaction_charges': {'NSE': D('0.0000297'), 'BSE': D('0.0000375')},
+            'sebi_charges': D('0.000001'),
+            'stamp_charges': D('0.00015'),
+            'gst_rate': D('0.18')
+        },
+        TradeType.EQUITY_INTRADAY: {
+            'brokerage': {'rate': D('0.0003'), 'flat': D('0'), 'cap': D('20')},
+            'stt_buy': D('0'),
+            'stt_sell': D('0.00025'),
+            'transaction_charges': {'NSE': D('0.0000297'), 'BSE': D('0.0000375')},
+            'sebi_charges': D('0.000001'),
+            'stamp_charges': D('0.00003'),
+            'gst_rate': D('0.18')
+        },
+        TradeType.FO_FUTURES: {
+            'brokerage': {'rate': D('0.0003'), 'flat': D('0'), 'cap': D('20')},
+            'stt_buy': D('0'),
+            'stt_sell': D('0.0002'),
+            'transaction_charges': {'NSE': D('0.0000173'), 'BSE': D('0')},
+            'sebi_charges': D('0.000001'),
+            'stamp_charges': D('0.00002'),
+            'gst_rate': D('0.18')
+        },
+        TradeType.FO_OPTIONS: {
+            'brokerage': {'rate': D('0'), 'flat': D('20'), 'cap': None},
+            'stt_buy': D('0'),
+            'stt_sell': D('0.001'),
+            'transaction_charges': {'NSE': D('0.0003503'), 'BSE': D('0.000325')},
+            'sebi_charges': D('0.000001'),
+            'stamp_charges': D('0.00003'),
+            'gst_rate': D('0.18')
+        }
+    }
 
 
 class ZerodhaXMLImporter(Importer):
@@ -37,6 +78,7 @@ class ZerodhaXMLImporter(Importer):
         self.account_fees = account_fees
         self.account_external = account_external
         self.demat_charge_per_sell = D("13.50")
+        self.charge_policy = ChargePolicy()
 
     def identify(self, filepath: str) -> bool:
         if not filepath.endswith('.xml'):
@@ -57,7 +99,6 @@ class ZerodhaXMLImporter(Importer):
         return self.account_root
 
     def extract(self, filepath: str, existing_entries=None):
-        """Extract beancount directives from the XML contract note."""
         entries = []
         try:
             tree = ET.parse(filepath)
@@ -66,389 +107,367 @@ class ZerodhaXMLImporter(Importer):
                 entries.extend(self._process_contract(contract, filepath))
         except ET.ParseError as e:
             print(f"Error parsing XML file {filepath}: {e}")
-        except Exception as e:
-            print(f"Error processing file {filepath}: {e}")
         return entries
+
+    # -------------------
+    # Helpers
+    # -------------------
+
+    def _parse_decimal(self, val: Optional[str]) -> Decimal:
+        try:
+            return D(val)
+        except Exception:
+            return D('0')
+
+    def _parse_date(self, val: Optional[str]):
+        try:
+            return datetime.strptime(val, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    def _get_text(self, elem: ET.Element, tag: str, default: str = "") -> str:
+        child = elem.find(tag)
+        return child.text.strip() if child is not None and child.text else default
+
+    def _extract_symbol(self, instrument_id: str) -> str:
+        if not instrument_id:
+            return "UNKNOWN"
+        return instrument_id.split(":")[1].split(" - ")[0]
+
+    # -------------------
+    # Charges
+    # -------------------
+
+    def _extract_contract_charges(self, contract_elem: ET.Element) -> Dict[str, Decimal]:
+        """Extract charges from XML subtotals."""
+        charges = {}
+        for charge_elem in contract_elem.findall('.//subtotals/charges/charge'):
+            name = self._get_text(charge_elem, 'name')
+            val = self._parse_decimal(self._get_text(charge_elem, 'value'))
+            if not name or val == 0:
+                continue
+            if 'PAY IN / PAY OUT OBLIGATION' in name or 'Net amount Receivable' in name:
+                continue
+            charges[name] = val
+        return charges
+
+    def _get_total_contract_value(self, contract_elem: ET.Element) -> Decimal:
+        total = D('0')
+        for trade_elem in contract_elem.findall('.//trade'):
+            value = self._parse_decimal(self._get_text(trade_elem, 'value'))
+            total += abs(value)
+        return total
+
+    def _allocate_contract_charges(self, contract_elem: ET.Element,
+                                   order_value: Decimal) -> Dict[str, Decimal]:
+        """Allocate contract-level charges proportionally to order value."""
+        xml_charges = self._extract_contract_charges(contract_elem)
+        total_value = self._get_total_contract_value(contract_elem)
+        if total_value == 0:
+            return {}
+        ratio = abs(order_value) / total_value
+        allocated = {name: (val * ratio).quantize(D("0.001")) for name, val in xml_charges.items()}
+        return allocated
+
+
+    def _calculate_charges(self, order_trades: List[Dict], trade_type: TradeType) -> Dict[str, Decimal]:
+        """Policy calculation (for validation only)."""
+        """Calculate charges based on policy configuration."""
+
+        if not order_trades:
+            return {}
+
+        total_value = sum(abs(t['value']) for t in order_trades)  # Use absolute values
+        total_quantity = sum(abs(t['quantity']) for t in order_trades)  # Use absolute values
+        first_trade = order_trades[0]
+        exchange = first_trade['exchange']
+        is_buy = first_trade['type'] == 'B'
+
+        policy = self.charge_policy.POLICY[trade_type]
+        charges = {}
+
+        # 1. Calculate Brokerage
+        brokerage_config = policy['brokerage']
+        if brokerage_config['flat'] > 0:
+            brokerage = brokerage_config['flat']
+        else:
+            brokerage = total_value * brokerage_config['rate']
+            if brokerage_config['cap'] and brokerage > brokerage_config['cap']:
+                brokerage = brokerage_config['cap']
+
+        charges['Brokerage'] = brokerage
+
+        # 2. Calculate STT
+        if is_buy:
+            stt = total_value * policy['stt_buy']
+        else:
+            stt = total_value * policy['stt_sell']
+        charges['Securities Transaction Tax'] = stt
+
+        # 3. Calculate Transaction Charges
+        tx_rate = policy['transaction_charges'].get(exchange, D('0'))
+        tx_charges = total_value * tx_rate
+        charges['Exchange Transaction Charges'] = tx_charges
+
+        # 4. Calculate SEBI Charges
+        sebi_charges = total_value * policy['sebi_charges']
+        charges['SEBI Turnover Fees'] = sebi_charges
+
+        # 5. Calculate Stamp Duty (only on buy side)
+        if is_buy:
+            stamp_duty = total_value * policy['stamp_charges']
+            charges['Stamp Duty'] = stamp_duty
+
+        # 6. Calculate GST (on brokerage + SEBI + transaction charges)
+        gst_base = brokerage + sebi_charges + tx_charges
+        gst = gst_base * policy['gst_rate']
+
+        # For now, put all GST in IGST (you can split into CGST/SGST based on state)
+        charges['Integrated GST'] = gst
+        charges['Central GST'] = D('0')
+        charges['State GST'] = D('0')
+
+        # 7. Clearing Charges (usually zero for most cases)
+        charges['Clearing Charges'] = D('0')
+
+
+        return {}
+
+    # -------------------
+    # Processing
+    # -------------------
+
+    def _group_trades_by_order(self, contract_elem: ET.Element) -> Dict[tuple, List[Dict]]:
+        orders = {}
+        for trade_elem in contract_elem.findall('.//trade'):
+            tr = {
+                'id': self._get_text(trade_elem, 'id'),
+                'order_id': self._get_text(trade_elem, 'order_id'),
+                'timestamp': self._get_text(trade_elem, 'timestamp'),
+                'exchange': self._get_text(trade_elem, 'exchange'),
+                'type': self._get_text(trade_elem, 'type'),
+                'quantity': self._parse_decimal(self._get_text(trade_elem, 'quantity')),
+                'price': self._parse_decimal(self._get_text(trade_elem, 'average_price')),
+                'value': self._parse_decimal(self._get_text(trade_elem, 'value')),
+                'instrument_id': trade_elem.get('instrument_id', 'Unknown'),
+                'segment_id': trade_elem.get('segment_id', 'Unknown'),
+            }
+            if not tr['quantity'] or not tr['price']:
+                continue
+            tr['symbol'] = self._extract_symbol(tr['instrument_id'])
+            key = (tr['order_id'], tr['type'])
+            orders.setdefault(key, []).append(tr)
+        return orders
 
     def _process_contract(self, contract_elem: ET.Element, filepath: str):
         contract_id = self._get_text(contract_elem, 'id', 'Unknown')
         contract_date = self._parse_date(self._get_text(contract_elem, 'timestamp'))
         if not contract_date:
-            print(f"Skipping contract {contract_id}: Invalid date")
             return []
         client_name = self._get_text(contract_elem, 'client/name', 'Unknown Client')
-        contract_charges = self._extract_contract_charges(contract_elem)
-        trades_by_instrument = self._group_trades_by_instrument(contract_elem)
-        if not trades_by_instrument:
-            print(f"Skipping contract {contract_id}: No trades found")
+
+        orders = self._group_trades_by_order(contract_elem)
+
+        if not orders:
             return []
+
         entries = []
-        for instrument_id, trades in trades_by_instrument.items():
-            entries.extend(
-                self._create_consolidated_transactions(
-                    trades, contract_charges, contract_date, contract_id, client_name, filepath
-                )
-            )
-        # print(f"DEBUG: processing contract {contract_id}, trades={len(trades_by_instrument)}")
+        for (order_id, ttype), order_trades in orders.items():
+            txn = self._create_order_transaction(order_trades, contract_elem,
+                                                 contract_date, contract_id,
+                                                 client_name, filepath)
+            entries.append(txn)
         return entries
 
-    def _group_trades_by_instrument(self, contract_elem: ET.Element) -> Dict[str, List[Dict]]:
-        """Group trades by instrument and order ID for consolidation.
+    # -------------------
+    # Transaction builder
+    # -------------------
 
-        Zerodha often splits large orders into multiple small trades.
-        We group these to create cleaner beancount transactions.
+    # def _create_order_transaction(self, order_trades: List[Dict],
+    #                               contract_elem: ET.Element,
+    #                               contract_date: datetime.date,
+    #                               contract_id: str,
+    #                               client_name: str,
+    #                               filepath: str) -> data.Transaction:
 
-        Args:
-            contract_elem: Contract XML element containing trades
+    #     total_qty = sum(abs(t['quantity']) for t in order_trades)
+    #     total_val = sum(abs(t['value']) for t in order_trades)
+    #     avg_price = total_val / total_qty if total_qty else D('0')
 
-        Returns:
-            Dictionary mapping instrument_id to list of trade dictionaries
-        """
-        trades_by_instrument = {}
+    #     first_trade = order_trades[0]
+    #     symbol = first_trade['symbol']
+    #     trade_type_char = first_trade['type']
+    #     order_id = first_trade['order_id']
+    #     instrument_id = first_trade['instrument_id']
+    #     segment_id = first_trade['segment_id']
 
-        for trade_elem in contract_elem.findall('.//trade'):
-            # Extract trade information
-            trade_data = {
-                'id': self._get_text(trade_elem, 'id'),
-                'order_id': self._get_text(trade_elem, 'order_id'),
-                'timestamp': self._get_text(trade_elem, 'timestamp'),
-                'exchange': self._get_text(trade_elem, 'exchange'),
-                'type': self._get_text(trade_elem, 'type'),  # 'B' for buy, 'S' for sell
-                'quantity': self._parse_decimal(self._get_text(trade_elem, 'quantity')),
-                'price': self._parse_decimal(self._get_text(trade_elem, 'average_price')),
-                'value': self._parse_decimal(self._get_text(trade_elem, 'value')),
-                'instrument_id': trade_elem.get('instrument_id', 'Unknown'),
-                'segment_id': trade_elem.get('segment_id', 'Unknown')
-            }
+    #     # Allocate XML charges
+    #     allocated_charges = self._allocate_contract_charges(contract_elem, total_val)
 
-            # Skip invalid trades
-            if not trade_data['quantity'] or not trade_data['price']:
-                continue
+    #     # Validate using policy
+    #     trade_type = self._detect_trade_type(instrument_id, segment_id, order_trades)
+    #     policy_charges = self._calculate_charges(order_trades, trade_type)
+    #     for cname, cval in allocated_charges.items():
+    #         if cname in policy_charges:
+    #             if abs(cval - policy_charges[cname]) > D("0.05"):
+    #                 print(f"[WARN] Charge mismatch {cname} order {order_id}: XML={cval} Policy={policy_charges[cname]}")
 
-            # Extract symbol from instrument_id (format: NSE:SYMBOL - EQ / ISIN)
-            symbol = self._extract_symbol(trade_data['instrument_id'])
-            trade_data['symbol'] = symbol
+    #     narration = f"{'Buy' if trade_type_char == 'B' else 'Sell'} {total_qty} {symbol} @ {avg_price:.2f} {contract_id}"
+    #     meta = {'filename': filepath, 'lineno': 0}
 
-            # Group by instrument_id for consolidation
-            if trade_data['instrument_id'] not in trades_by_instrument:
-                trades_by_instrument[trade_data['instrument_id']] = []
-            trades_by_instrument[trade_data['instrument_id']].append(trade_data)
+    #     postings = []
 
-        return trades_by_instrument
+    #     if trade_type_char == 'B':
+    #         stock_account = account.join(self.account_root, symbol)
+    #         stock_units = amount.Amount(total_qty, symbol)
+    #         cost = position.Cost(avg_price, self.currency, None, None)
+    #         total_cash_outflow = (total_val + sum(allocated_charges.values())).quantize(D("0.01"))
+    #         postings.append(data.Posting(stock_account, stock_units, cost, None, None, None))
+    #         postings.append(data.Posting(self.account_cash, -amount.Amount(total_cash_outflow, self.currency), None, None, None, None))
 
+    #     elif trade_type_char == 'S':
+    #         stock_account = account.join(self.account_root, symbol)
+    #         stock_units = amount.Amount(total_qty, symbol)
+    #         price_amount = amount.Amount(avg_price, self.currency)
+    #         cost = position.Cost(None, None, None, None)
+    #         all_charges = sum(allocated_charges.values()) + self.demat_charge_per_sell
+    #         net_cash_inflow = (total_val - all_charges).quantize(D("0.01"))
+    #         postings.append(data.Posting(stock_account, -stock_units, cost, price_amount, None, None))
+    #         postings.append(data.Posting(self.account_cash, amount.Amount(net_cash_inflow, self.currency), None, None, None, None))
+    #         # Add PnL posting
+    #         gains_account = self.account_gains.format(symbol) if '{}' in self.account_gains else self.account_gains
+    #         postings.append(data.Posting(gains_account, None, None, None, None, None))
+    #         # Demat
+    #         if self.demat_charge_per_sell:
+    #             postings.append(data.Posting(account.join(self.account_fees, 'Demat'),
+    #                                          amount.Amount(self.demat_charge_per_sell, self.currency), None, None, None, None))
 
-    def _extract_contract_charges(self, contract_elem: ET.Element) -> Dict[str, Decimal]:
-        """Extract all charges from the contract for proportional allocation.
+    #     # Charge postings
+    #     for cname, cval in allocated_charges.items():
+    #         if cval > 0:
+    #             postings.append(data.Posting(self._map_charge_to_account(cname),
+    #                                          amount.Amount(cval, self.currency), None, None, None, None))
 
-        Args:
-        contract_elem: Contract XML element
+    #     return data.Transaction(meta=meta, date=contract_date, flag='*',
+    #                             payee=None, narration=narration,
+    #                             tags=frozenset(), links=frozenset(),
+    #                             postings=postings)
 
-        Returns:
-        Dictionary mapping charge names to amounts
-        """
-        charges = {}
+    def _create_order_transaction(self, order_trades: List[Dict],
+                              contract_elem: ET.Element,
+                              contract_date: datetime.date,
+                              contract_id: str,
+                              client_name: str,
+                              filepath: str) -> data.Transaction:
 
-        # Extract all charges from grandtotals (these are the final amounts)
-        for charge_elem in contract_elem.findall('.//grandtotal'):
-            charge_name = self._get_text(charge_elem, 'name')  # Keep as 'name' - your original was correct
-            charge_type = self._get_text(charge_elem, 'type')
-            charge_value_str = self._get_text(charge_elem, 'value')
+        total_qty = sum(abs(t['quantity']) for t in order_trades)
+        total_val = sum(abs(t['value']) for t in order_trades)
+        avg_price = total_val / total_qty if total_qty else D('0')
 
-            # Skip if charge name is None or empty
-            if not charge_name or charge_name.strip() == 'None':
-                continue
+        first_trade = order_trades[0]
+        symbol = first_trade['symbol']
+        trade_type_char = first_trade['type']
+        order_id = first_trade['order_id']
+        instrument_id = first_trade['instrument_id']
+        segment_id = first_trade['segment_id']
 
-            # Convert to Decimal - THIS IS THE KEY FIX
-            charge_value = self._parse_decimal(charge_value_str)
+        # Allocate XML charges
+        allocated_charges = self._allocate_contract_charges(contract_elem, total_val)
 
-            # Skip zero charges, None values, and the net settlement amount
-            if charge_value == 0:
-                continue
-            if 'PAY IN / PAY OUT OBLIGATION' in charge_name:
-                continue  # This is gross trade value, not a charge
-            if 'Net amount Receivable' in charge_name:
-                continue  # This is net settlement, handled separately
-            # # Skip empty charge names
-            # if not charge_name.strip():
-            #     continue
+        # Validate using policy
+        trade_type = self._detect_trade_type(instrument_id, segment_id, order_trades)
+        policy_charges = self._calculate_charges(order_trades, trade_type)
+        for cname, cval in allocated_charges.items():
+            if cname in policy_charges:
+                if abs(cval - policy_charges[cname]) > D("0.05"):
+                    print(f"[WARN] Charge mismatch {cname} order {order_id}: XML={cval} Policy={policy_charges[cname]}")
 
-            charges[charge_name] = charge_value
+        narration = f"{'Buy' if trade_type_char == 'B' else 'Sell'} {total_qty} {symbol} @ {avg_price:.2f} {contract_id}"
+        # meta = {'filename': filepath, 'lineno': 0}
+        meta = data.new_metadata(filepath, 0)
+        postings = []
 
-        return charges
+        # Common proceeds and charges
+        proceeds = total_val.quantize(D("0.001"))
+        charges_total = sum(allocated_charges.values())
+        if trade_type_char == 'S':
+            charges_total += self.demat_charge_per_sell
 
+        if trade_type_char == 'B':
+            stock_account = account.join(self.account_root, symbol)
+            stock_units = amount.Amount(total_qty, symbol)
+            cost = position.Cost(avg_price, self.currency, None, None)
+            cash_flow = (proceeds + charges_total).quantize(D("0.001"))  # outflow
+            postings.append(data.Posting(stock_account, stock_units, cost, None, None, None))
+            postings.append(data.Posting(self.account_cash,
+                                         -amount.Amount(cash_flow, self.currency),
+                                         None, None, None, None))
 
-    def _create_consolidated_transactions(self, trades: List[Dict], contract_charges: Dict[str, Decimal],
-                                          contract_date: datetime.date, contract_id: str,
-                                          client_name: str, filepath: str) -> List[data.Transaction]:
-        """Create single consolidated transactions that include trades and all charges."""
+        elif trade_type_char == 'S':
+            stock_account = account.join(self.account_root, symbol)
+            stock_units = amount.Amount(total_qty, symbol)
+            price_amount = amount.Amount(avg_price, self.currency)
+            cost = position.Cost(None, None, None, None)
+            cash_flow = (proceeds - charges_total).quantize(D("0.001"))  # inflow
+            postings.append(data.Posting(stock_account, -stock_units, cost, price_amount, None, None))
+            postings.append(data.Posting(self.account_cash,
+                                         amount.Amount(cash_flow, self.currency),
+                                         None, None, None, None))
+            # PnL autoposting
+            gains_account = self.account_gains.format(symbol) if '{}' in self.account_gains else self.account_gains
+            postings.append(data.Posting(gains_account, None, None, None, None, None))
+            # Demat (only as expense, not baked into cash again)
+            if self.demat_charge_per_sell:
+                postings.append(data.Posting(account.join(self.account_fees, 'Demat'),
+                                             amount.Amount(self.demat_charge_per_sell, self.currency),
+                                             None, None, None, None))
 
+        # Charge postings (only once!)
+        for cname, cval in allocated_charges.items():
+                if cval > 0:
+                    postings.append(data.Posting(self._map_charge_to_account(cname),
+                                                 amount.Amount(cval, self.currency),
+                                                 None, None, None, None))
 
-        """Create single consolidated transactions that include trades and all charges.
+        return data.Transaction(meta=meta, date=contract_date, flag='*',
+                                    payee=None, narration=narration,
+                                    tags=frozenset(), links=frozenset(),
+                                    postings=postings)
 
-        This creates one transaction per order that includes:
-        - The stock purchase/sale
-        - Proportional allocation of all charges and fees
-        - Demat charges for sell transactions
-        - Proper cost basis calculation including all costs
-
-        Args:
-            trades: List of trade dictionaries for the same instrument
-            contract_charges: Dictionary of all contract charges
-            contract_date: Date of the contract
-            contract_id: Contract identifier
-            client_name: Client name for reference
-
-        Yields:
-            Consolidated beancount transaction objects
-        """
-        if not trades:
-            return []
-
-        # Calculate total contract value for proportional charge allocation
-        total_contract_value = sum(t['value'] for t in trades)
-
-        # Group trades by order_id and type to further consolidate
-        orders = {}
-        for trade in trades:
-            key = (trade['order_id'], trade['type'])
-            if key not in orders:
-                orders[key] = []
-            orders[key].append(trade)
-
-        txns = []
-
-        # Create transaction for each order
-        for (order_id, trade_type), order_trades in orders.items():
-            # Calculate consolidated trade values
-            total_quantity = sum(t['quantity'] for t in order_trades)
-            total_value = sum(t['value'] for t in order_trades)
-            avg_price = total_value / total_quantity if total_quantity else D('0')
-
-            # Get representative trade data
-            first_trade = order_trades[0]
-            symbol = first_trade['symbol']
-            exchange = first_trade['exchange']
-
-            # Calculate proportional charges based on this order's value
-            order_proportion = total_value / total_contract_value if total_contract_value else D('0')
-
-            # Create transaction description
-            trade_type_desc = 'Buy' if trade_type == 'B' else 'Sell'
-            trade_ids = [t['id'] for t in order_trades]
-            narration = f"{trade_type_desc} {total_quantity} {symbol} @ {avg_price:.2f}"
-
-            # Create metadata for reference
-            meta = {
-                '__tolerances__': {},  # Required for beancount v3
-                'lineno': 0,           # Needed by beancount for sorting
-                'filename': filepath,  # required by beancount
-                'order_id': order_id,
-                'trade_ids': ','.join(trade_ids),
-                'exchange': exchange,
-                'contract_id': contract_id
-            }
-
-            # Create postings - single transaction with all charges included
-            postings = []
-
-            if trade_type == 'B':  # Buy transaction
-                # Calculate total cost including charges
-                proportional_charges = sum(charge * order_proportion for charge in contract_charges.values())
-                total_cost_per_share = (total_value + proportional_charges) / total_quantity
-                total_cash_outflow = total_value + proportional_charges
-
-                # Stock account with total cost basis
-                stock_account = account.join(self.account_root, symbol)
-                stock_units = amount.Amount(total_quantity.quantize(D('0.0001')), symbol)
-                cost = position.Cost(total_cost_per_share.quantize(D('0.01')), self.currency, None, None)
-
-                # Cash outflow
-                cash_amount = amount.Amount(total_cash_outflow.quantize(D('0.01')), self.currency)
-
-                postings = [
-                    data.Posting(stock_account, stock_units, cost, None, None, None),
-                    data.Posting(self.account_cash, -cash_amount, None, None, None, None)
-                ]
-
-                # Add individual charge postings for detailed tracking
-                for charge_name, charge_value in contract_charges.items():
-                    proportional_charge = charge_value * order_proportion
-                    if proportional_charge > 0:
-                        charge_amount = amount.Amount(proportional_charge.quantize(D('0.01')), self.currency)
-                        charge_account = self._map_charge_to_account(charge_name)
-                        postings.append(
-                            data.Posting(charge_account, charge_amount, None, None, None, None)
-                        )
-
-            elif trade_type == 'S':  # Sell transaction
-                # Calculate charges including optional demat charge
-                proportional_charges = sum(charge * order_proportion for charge in contract_charges.values())
-                demat_charge = self.demat_charge_per_sell if self.demat_charge_per_sell else D('0')
-                total_charges = proportional_charges + demat_charge
-
-                # Net proceeds after all charges
-                net_proceeds = total_value - total_charges
-
-                # Stock account (what we sold) - use pure trade price for capital gains
-                stock_account = account.join(self.account_root, symbol)
-                stock_units = amount.Amount(total_quantity.quantize(D('0.0001')), symbol)
-                price_amount = amount.Amount(avg_price.quantize(D('0.01')), self.currency)
-
-                # Use empty cost for sells (let beancount handle cost basis)
-                cost = position.Cost(None, None, None, None)
-
-                # Cash proceeds
-                cash_amount = amount.Amount(net_proceeds.quantize(D('0.01')), self.currency)
-
-                # Capital gains account (auto-calculated by beancount)
-                gains_account = self.account_gains.format(symbol) if '{}' in self.account_gains else self.account_gains
-
-                postings = [
-                    data.Posting(stock_account, -stock_units, cost, price_amount, None, None),
-                    data.Posting(self.account_cash, cash_amount, None, None, None, None),
-                    data.Posting(gains_account, None, None, None, None, None)  # Auto-calculated
-                ]
-
-                # Add individual charge postings for detailed tracking
-                for charge_name, charge_value in contract_charges.items():
-                    proportional_charge = charge_value * order_proportion
-                    if proportional_charge > 0:
-                        charge_amount = amount.Amount(proportional_charge.quantize(D('0.01')), self.currency)
-                        charge_account = self._map_charge_to_account(charge_name)
-                        postings.append(
-                            data.Posting(charge_account, charge_amount, None, None, None, None)
-                        )
-
-                # Add demat charge if applicable
-                if demat_charge > 0:
-                    demat_amount = amount.Amount(demat_charge.quantize(D('0.01')), self.currency)
-                    demat_account = account.join(self.account_fees, 'Demat')
-                    postings.append(
-                        data.Posting(demat_account, demat_amount, None, None, None, None)
-                    )
-                # print(f"DEBUG: created Sell txn for {symbol}, qty={total_quantity}, proceeds={net_proceeds}")
-            # Create and yield transaction
-            txn = data.Transaction(
-                meta=meta,
-                date=contract_date,
-                flag='*',  # Cleared transaction
-                payee=None,
-                narration=narration,
-                tags=frozenset({'zerodha', 'trade'}),
-                links=frozenset(),
-                postings=postings
-            )
-            txns.append(txn)
-
-        return txns
+    # -------------------
+    # Charge mapping
+    # -------------------
 
     def _map_charge_to_account(self, charge_name: str) -> str:
-        """Map charge name to appropriate account for detailed fee tracking.
-
-        Args:
-            charge_name: Name of the charge from XML
-
-        Returns:
-            Account name for the charge
-        """
-        charge_name_lower = charge_name.lower()
-
-        if 'brokerage' in charge_name_lower:
+        cname = charge_name.lower()
+        if 'brokerage' in cname:
             return account.join(self.account_fees, 'Brokerage')
-        elif 'securities transaction tax' in charge_name_lower or charge_name_lower == 'stt':
-            return account.join(self.account_fees, 'STT')  # Securities Transaction Tax
-        elif 'stamp duty' in charge_name_lower:
+        elif 'exchange transaction' in cname:
+            return account.join(self.account_fees, 'Exchange')
+        elif 'stt' in cname or 'securities transaction tax' in cname:
+            return account.join(self.account_fees, 'STT')
+        elif 'stamp' in cname:
             return account.join(self.account_fees, 'StampDuty')
-        elif 'integrated gst' in charge_name_lower or 'igst' in charge_name_lower:
-            return account.join(self.account_fees, 'IGST')  # Integrated GST
-        elif 'central gst' in charge_name_lower or 'cgst' in charge_name_lower:
-            return account.join(self.account_fees, 'CGST')  # Central GST
-        elif 'state gst' in charge_name_lower or 'sgst' in charge_name_lower:
-            return account.join(self.account_fees, 'SGST')  # State GST
-        elif 'sebi' in charge_name_lower and 'turnover' in charge_name_lower:
-            return account.join(self.account_fees, 'SEBI-Turnover')  # SEBI Turnover Fees
-        elif 'exchange transaction charges' in charge_name_lower:
-            return account.join(self.account_fees, 'Exchange-Transaction')
-        elif 'clearing charges' in charge_name_lower:
-            return account.join(self.account_fees, 'Exchange-Clearing')
+        elif 'igst' in cname or 'integrated gst' in cname:
+            return account.join(self.account_fees, 'IGST')
+        elif 'cgst' in cname:
+            return account.join(self.account_fees, 'CGST')
+        elif 'sgst' in cname:
+            return account.join(self.account_fees, 'SGST')
+        elif 'sebi' in cname:
+            return account.join(self.account_fees, 'SEBI')
         else:
-            # For any unrecognized charges, use Other with warning
-            print(f"Warning: Unrecognized charge type: {charge_name}")
             return account.join(self.account_fees, 'Other')
 
-    # Utility methods for XML parsing and data conversion
+    # -------------------
+    # Trade type detection
+    # -------------------
 
-    def _get_text(self, element: ET.Element, xpath: str, default: str = '') -> str:
-        """Safely extract text from XML element using xpath.
-
-        Args:
-            element: XML element to search
-            xpath: XPath expression to find target element
-            default: Default value if element not found
-
-        Returns:
-            Text content of found element or default value
-        """
-        try:
-            found = element.find(xpath)
-            return found.text.strip() if found is not None and found.text else default
-        except AttributeError:
-            return default
-
-    def _parse_date(self, date_str: str) -> Optional[datetime.date]:
-        """Parse date string from XML into datetime.date object.
-
-        Handles the format used in Zerodha XML files: YYYY-MM-DD
-
-        Args:
-            date_str: Date string to parse
-
-        Returns:
-            Parsed date object or None if parsing fails
-        """
-        if not date_str:
-            return None
-
-        try:
-            return datetime.strptime(date_str, '%Y-%m-%d').date()
-        except ValueError:
-            print(f"Unable to parse date: {date_str}")
-            return None
-
-
-    def _parse_decimal(self, value_str: str) -> Decimal:
-        """Parse string value into Decimal for precise financial calculations."""
-        if not value_str or value_str.strip() in ['', 'None', 'null']:
-            return D('0')
-
-        try:
-            return D(value_str.strip())
-        except (ValueError, TypeError):
-            print(f"Unable to parse decimal: {value_str}")
-            return D('0')
-
-
-    def _extract_symbol(self, instrument_id: str) -> str:
-        """Extract trading symbol from instrument ID.
-
-        Instrument IDs in Zerodha XML follow format: NSE:SYMBOL - EQ / ISIN
-        This method extracts just the SYMBOL part.
-
-        Args:
-            instrument_id: Full instrument identifier
-
-        Returns:
-            Extracted symbol or 'UNKNOWN' if extraction fails
-        """
-        if not instrument_id:
-            return 'UNKNOWN'
-
-        try:
-            # Split by colon and take the second part, then split by space
-            parts = instrument_id.split(':')
-            if len(parts) >= 2:
-                symbol_part = parts[1].split(' - ')[0].strip()
-                return symbol_part
-            return 'UNKNOWN'
-        except (IndexError, AttributeError):
-            return 'UNKNOWN'
+    def _detect_trade_type(self, instrument_id: str, segment_id: str, trades: List[Dict]) -> TradeType:
+        if 'NFO' in segment_id or 'BFO' in segment_id or 'DERIVATIVES' in segment_id.upper():
+            if 'FUT' in instrument_id or any('FUT' in t.get('symbol', '') for t in trades):
+                return TradeType.FO_FUTURES
+            else:
+                return TradeType.FO_OPTIONS
+        trade_types = set(t['type'] for t in trades)
+        return TradeType.EQUITY_INTRADAY if len(trade_types) > 1 else TradeType.EQUITY_DELIVERY
