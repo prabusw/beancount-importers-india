@@ -1,6 +1,6 @@
 #  Beancount Importers for Indian Banks and brokers
 
-This repository has few importers for
+This repository has importers for
 [Beancount](https://github.com/beancount/beancount), a plain text
 accounting software. The available importers are for:
 
@@ -14,6 +14,9 @@ Stock brokers
 - Zerodha - India
 - E*Trade - US
 - iOCBC - Singapore
+
+There is also a script to download the telegraphic transfer rates of
+SBI as per Indian Income tax regulations for beancount.
 
 ## Folder Structure
 
@@ -156,7 +159,7 @@ Ensure that the csv file is named as etradeNNNNNNNN.csv format. For
 example, etrade20232024.csv is a valid filename.
 
 
-### iOBCBC
+### iOCBC
 
 The Singapore broker OCBC securities provide a csv formatted report of
 all the trade transaction conducted on their mult-currency
