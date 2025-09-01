@@ -55,18 +55,40 @@ structure](https://github.com/prabusw/beancount-importer-zerodha/blob/master/fol
 └── tools
     └── tsv2csv.sh
 ```
-## Using the Importers
+## Usage
 
-The commands to use to identify, extract and archive are given below:
+The following command can be used to:
+
+- identify the input file
+- extract beancount formatted transactions
+- archive the input file in a proper hierarchy
 
 ```
-$./import_prabu.py [option] Downloads/
+$./import_prabu.py [option] Downloads/filename
 where option can be identify|extract|archive
 ```
-Depending on the number of matching csv files available in Downloads
-folder, the beancount formatted output will be displayed one by
-one. You can redirect it to new txt file and copy paste it later to
-my.beancount.
+
+The above command can be entered without filename. Depending on the
+number of matching csv files available in Downloads folder, the
+beancount formatted output will be displayed one by one.
+
+For large number of transactions, consider redirecting the output to a
+txt file.  From this text file, the transactions can be moved to your
+ledger prabu.beancount.
+
+```
+$./import_prabu.py extract Downloads/filename > my.txt
+
+```
+
+Smartimporter feature has been enabled for few of the importers to
+predict postings and predict payees. Use the below command to train
+the smartimporter based on existing entries.
+
+```
+$./import_prabu.py extract -e prabu.beancount Downloads/filename > my.txt
+
+```
 
 ## Banks
 
