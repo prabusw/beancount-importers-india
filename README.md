@@ -174,3 +174,13 @@ entries can then be imported using this importer.
 
 Ensure that the csv file is named as kgiNNNNNNNN.csv format. For
 example, kgi20232024.csv is a valid filename.
+
+## Exchange rates
+
+The 'import_rates.py' script downloads the State Bank of India's
+official telegraphic transfer rates from
+https://github.com/sahilgupta/sbi-fx-ratekeeper and outputs the rates
+as beancount formatted 'price' transactions.
+
+The required period and exchange rate pairs can be configured in the
+script.
