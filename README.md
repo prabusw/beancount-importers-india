@@ -78,7 +78,6 @@ ledger prabu.beancount.
 
 ```
 $./import_prabu.py extract Downloads/filename > my.txt
-
 ```
 
 Smartimporter feature has been enabled for few of the importers to
@@ -87,7 +86,6 @@ the smartimporter based on existing entries.
 
 ```
 $./import_prabu.py extract -e prabu.beancount Downloads/filename > my.txt
-
 ```
 
 ## Banks
