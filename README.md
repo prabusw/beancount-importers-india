@@ -68,7 +68,7 @@ folder, the beancount formatted output will be displayed one by
 one. You can redirect it to new txt file and copy paste it later to
 my.beancount.
 
-## Importer for Banks
+## Banks
 
 ### Icici Bank
 When downloading statements from ICICIbank, choose the xls format.
@@ -106,7 +106,7 @@ The kvb importer uses the account number in the downloaded statement and
 this must be configured in your importer config file.
 
 
-## Importer for Brokers
+## Brokers
 
 ### Zerodha
 
